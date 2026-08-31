@@ -18,7 +18,7 @@ services:
       - key: PORT
         value: 8000
       - key: USE_PROXIES
-        value: "false"
+        value: "true"
       - key: ENABLE_PROXY_CHECKER
         value: "false"
       - key: LOG_LEVEL
