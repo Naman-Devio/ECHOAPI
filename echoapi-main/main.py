@@ -916,20 +916,59 @@ async def get_audio(
     cached = await cache_get(cache_key)
 
     if not cached:
-        try:
-            # Use bestaudio format selector to get audio-only streams
-            audio_opts = {"format": "bestaudio/best"}
-            info = await extract_info(url, audio_opts)
-        except yt_dlp.utils.DownloadError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        video_id = extract_video_id(url)
+        if not video_id:
+            raise HTTPException(status_code=400, detail="Invalid YouTube URL")
 
-        audio = pick_best_audio_url(info, quality)
-        meta = build_video_info(info)
-        
+        # Fast path: InnerTube stream URLs (~300ms)
+        audio = None
+        meta = None
+        t0 = time.time()
+        try:
+            streams = await get_stream_urls_fast(video_id)
+            raw = await get_video_info_fast(video_id)
+            if raw:
+                meta = parse_video_info(raw, video_id)
+
+            if streams and streams.get("audio") and streams["audio"].get("url"):
+                # Audio-only stream available
+                audio = {
+                    "url": streams["audio"]["url"],
+                    "ext": "webm" if "webm" in (streams["audio"].get("format") or "") else "m4a",
+                    "abr": streams["audio"].get("bitrate", 0) // 1000 if streams["audio"].get("bitrate") else None,
+                    "filesize": None,
+                    "is_audio_only": True,
+                }
+                elapsed = time.time() - t0
+                logger.info(f"✓ InnerTube audio-only for {video_id} in {elapsed:.2f}s")
+            elif streams and streams.get("video") and streams["video"].get("url"):
+                # No audio-only, use combined stream
+                audio = {
+                    "url": streams["video"]["url"],
+                    "ext": "mp4",
+                    "abr": None,
+                    "filesize": None,
+                    "is_audio_only": False,
+                }
+                elapsed = time.time() - t0
+                logger.info(f"✓ InnerTube combined stream for {video_id} in {elapsed:.2f}s")
+        except Exception as e:
+            logger.warning(f"InnerTube audio failed for {video_id}: {e}")
+
+        # Fallback: yt-dlp (slower, needs PO tokens for audio-only)
+        if not audio or not meta:
+            try:
+                audio_opts = {"format": "bestaudio/best"}
+                info = await extract_info(url, audio_opts)
+                audio = pick_best_audio_url(info, quality)
+                meta = build_video_info(info)
+            except yt_dlp.utils.DownloadError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
         is_audio_only = audio.get("is_audio_only", False)
-        
+
         cached = {
             "id": meta["id"],
             "title": meta["title"],
@@ -940,6 +979,7 @@ async def get_audio(
             "audio": audio,
             "format_type": "audio_only" if is_audio_only else "video_audio_combined",
             "note": "Audio-only stream" if is_audio_only else "Combined stream (audio+video) - YouTube requires PO tokens or cookies for audio-only streams",
+            "method": "innertube" if is_audio_only else "yt-dlp",
         }
         await cache_set(cache_key, cached, ttl=1800)  # 30 min (URLs expire)
 
