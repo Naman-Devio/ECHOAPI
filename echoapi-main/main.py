@@ -920,52 +920,62 @@ async def get_audio(
         if not video_id:
             raise HTTPException(status_code=400, detail="Invalid YouTube URL")
 
-        # Fast path: InnerTube stream URLs (~300ms)
+        # Fast path: InnerTube stream URLs
         audio = None
         meta = None
         t0 = time.time()
         try:
-            streams = await get_stream_urls_fast(video_id)
             raw = await get_video_info_fast(video_id)
             if raw:
                 meta = parse_video_info(raw, video_id)
+                sd = raw.get("streamingData", {})
+                formats = sd.get("formats", [])
+                adaptive = sd.get("adaptiveFormats", [])
 
-            if streams and streams.get("audio") and streams["audio"].get("url"):
-                # Audio-only stream available
-                audio = {
-                    "url": streams["audio"]["url"],
-                    "ext": "webm" if "webm" in (streams["audio"].get("format") or "") else "m4a",
-                    "abr": streams["audio"].get("bitrate", 0) // 1000 if streams["audio"].get("bitrate") else None,
-                    "filesize": None,
-                    "is_audio_only": True,
-                }
-                elapsed = time.time() - t0
-                logger.info(f"✓ InnerTube audio-only for {video_id} in {elapsed:.2f}s")
-            elif streams and streams.get("video") and streams["video"].get("url"):
-                # No audio-only, use combined stream
-                audio = {
-                    "url": streams["video"]["url"],
-                    "ext": "mp4",
-                    "abr": None,
-                    "filesize": None,
-                    "is_audio_only": False,
-                }
-                elapsed = time.time() - t0
-                logger.info(f"✓ InnerTube combined stream for {video_id} in {elapsed:.2f}s")
+                # 1. Try audio-only adaptive format
+                audio_streams = [f for f in adaptive if "audio" in f.get("mimeType", "") and f.get("url")]
+                if audio_streams:
+                    best = max(audio_streams, key=lambda x: x.get("bitrate", 0))
+                    audio = {
+                        "url": best["url"],
+                        "ext": "webm" if "webm" in best.get("mimeType", "") else "m4a",
+                        "abr": best.get("bitrate", 0) // 1000 if best.get("bitrate") else None,
+                        "filesize": None,
+                        "is_audio_only": True,
+                    }
+                    logger.info(f"✓ InnerTube audio-only for {video_id} in {time.time()-t0:.2f}s")
+
+                # 2. Try combined format (itag=18 style)
+                if not audio:
+                    combined = [f for f in formats if f.get("url") and f.get("audioQuality")]
+                    if combined:
+                        best = combined[0]
+                        audio = {
+                            "url": best["url"],
+                            "ext": "mp4",
+                            "abr": None,
+                            "filesize": None,
+                            "is_audio_only": False,
+                        }
+                        logger.info(f"✓ InnerTube combined stream for {video_id} in {time.time()-t0:.2f}s")
         except Exception as e:
             logger.warning(f"InnerTube audio failed for {video_id}: {e}")
 
-        # Fallback: yt-dlp (slower, needs PO tokens for audio-only)
+        # Fallback: yt-dlp (slower, needs PO tokens)
         if not audio or not meta:
             try:
                 audio_opts = {"format": "bestaudio/best"}
                 info = await extract_info(url, audio_opts)
                 audio = pick_best_audio_url(info, quality)
-                meta = build_video_info(info)
-            except yt_dlp.utils.DownloadError as e:
-                raise HTTPException(status_code=400, detail=str(e))
+                if not meta:
+                    meta = build_video_info(info)
             except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
+                logger.warning(f"yt-dlp audio fallback failed: {e}")
+                # Final fallback: return metadata only with error
+                if not meta:
+                    raise HTTPException(status_code=503, detail="Audio streams unavailable. YouTube requires PO tokens for audio extraction. Info/search endpoints still work.")
+                if not audio:
+                    raise HTTPException(status_code=503, detail="Audio stream URL unavailable. Try /api/info for metadata.")
 
         is_audio_only = audio.get("is_audio_only", False)
 
