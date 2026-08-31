@@ -1,0 +1,18 @@
+[Unit]
+Description=EchoTube API
+After=network.target redis.service
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/echotube-api
+ExecStart=/opt/echotube-api/venv/bin/python server.py
+Restart=always
+RestartSec=5
+Environment=PORT=8000
+Environment=USE_PROXIES=true
+Environment=REDIS_URL=redis://localhost:6379
+Environment=LOG_LEVEL=INFO
+
+[Install]
+WantedBy=multi-user.target

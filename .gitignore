@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+venv/
+.venv/
+
+# Environment
+.env
+*.local
+
+# Data
+data/
+*.log
+server_log.txt
+
+# Proxy files
+echoapi-main/proxies/
+proxyscrap/proxy_pool/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# YouTube cookies
+cookies.txt
+*.cookies
+
+# API keys (regenerated)
+api_keys.json
+
+# Compiled
+*.pyc

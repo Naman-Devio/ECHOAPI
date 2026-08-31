@@ -1,0 +1,80 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# EchoTube API — Docker Compose (Full Stack + PO Token Provider)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Usage:
+#   docker compose up -d              # Start all services
+#   docker compose up -d --build      # Rebuild and start
+#   docker compose logs -f api        # Follow API logs
+#   docker compose down               # Stop all services
+#
+# Services:
+#   - redis: Cache layer
+#   - pot-provider: YouTube PO Token generator (required for audio-only streams)
+#   - api: EchoTube API server
+
+services:
+  # ── Redis (caching layer) ────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── PO Token Provider (YouTube auth) ─────────────────────────────────────
+  # Generates Proof-of-Origin tokens for yt-dlp to bypass YouTube bot detection.
+  # Without this, you only get itag=18 (360p combined video+audio).
+  # With this, you get all adaptive formats including audio-only streams.
+  pot-provider:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    ports:
+      - "4416:4416"
+    restart: unless-stopped
+    # If using a local proxy, add: --net=host
+    # network_mode: host
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4416/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  # ── EchoTube API ─────────────────────────────────────────────────────────
+  api:
+    build: .
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - USE_PROXIES=${USE_PROXIES:-true}
+      - ENABLE_PROXY_CHECKER=${ENABLE_PROXY_CHECKER:-false}
+      - WORKERS=${WORKERS:-2}
+      - CACHE_TTL=${CACHE_TTL:-3600}
+      - RATE_LIMIT=${RATE_LIMIT:-120}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # PO Token provider URL (for yt-dlp plugin)
+      - POT_PROVIDER_URL=http://pot-provider:4416
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+      pot-provider:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  redis_data:

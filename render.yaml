@@ -1,0 +1,40 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# EchoTube API — Render Deployment
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Deploy: Push to GitHub → Connect repo on render.com → Auto-deploy
+#
+# Free tier: 750 hrs/mo, 512MB RAM, shared CPU
+# Self-ping keeps it awake (no cold starts)
+
+services:
+  # ── EchoTube API ─────────────────────────────────────────────────────────
+  - type: web
+    name: echotube-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: USE_PROXIES
+        value: "false"
+      - key: ENABLE_PROXY_CHECKER
+        value: "false"
+      - key: LOG_LEVEL
+        value: INFO
+      - key: CACHE_TTL
+        value: "3600"
+      - key: RATE_LIMIT
+        value: "120"
+      - key: WORKERS
+        value: "1"
+    healthCheckPath: /health
+    autoDeploy: true
+
+  # ── Redis (optional, for persistent cache) ───────────────────────────────
+  # Uncomment if you need persistent cache across deploys
+  # - type: redis
+  #   name: echotube-redis
+  #   plan: free
+  #   ipAllowList: "0.0.0.0/0"
