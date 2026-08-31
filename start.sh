@@ -8,7 +8,7 @@ echo "Starting EchoTube API stack..."
 
 # Start PO token server in background
 echo "Starting PO Token server on port 4416..."
-cd /tmp/bgutil/server
+cd /opt/bgutil/server
 node build/main.js --port 4416 &
 POT_PID=$!
 echo "PO Token server PID: $POT_PID"

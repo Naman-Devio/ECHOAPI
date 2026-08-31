@@ -25,11 +25,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install PO token server
-RUN git clone --single-branch --branch 1.3.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /tmp/bgutil && \
-    cd /tmp/bgutil/server && \
+RUN git clone --single-branch --branch 1.3.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil && \
+    cd /opt/bgutil/server && \
     npm ci && \
     npx tsc && \
-    rm -rf /tmp/bgutil/.git
+    rm -rf /opt/bgutil/.git
 
 # Copy source
 COPY . .
@@ -37,6 +37,9 @@ COPY . .
 # Copy PO token server startup script
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
+
+# Verify PO token server exists
+RUN ls /opt/bgutil/server/build/main.js
 
 # Expose ports
 EXPOSE 8000 4416
