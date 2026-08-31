@@ -66,19 +66,40 @@ def extract_video_id(url: str) -> Optional[str]:
 
 
 # ─── Fast Video Info (~300-800ms) ───────────────────────────────────────────
-async def get_video_info_fast(video_id: str, client: str = "web", proxy: str = None) -> Optional[Dict]:
-    """Fetch video info directly from YouTube InnerTube API (async)."""
+async def get_video_info_fast(video_id: str, client: str = "web", proxy: str = None, po_token: str = None, visitor_data: str = None) -> Optional[Dict]:
+    """Fetch video info directly from YouTube InnerTube API (async).
+    
+    Args:
+        video_id: YouTube video ID
+        client: Client type (currently always uses WEB)
+        proxy: Optional HTTP proxy
+        po_token: Optional PO token for streaming data from cloud IPs
+        visitor_data: Optional visitor data (must match the PO token)
+    """
+    ctx_client = {
+        "clientName": "WEB",
+        "clientVersion": "2.20250101.00.00",
+        "hl": "en",
+        "gl": "US",
+    }
+    
+    # Add visitor_data if provided (required for PO token auth)
+    if visitor_data:
+        ctx_client["visitorData"] = visitor_data
+
     payload = {
         "context": {
-            "client": {
-                "clientName": "WEB",
-                "clientVersion": "2.20250101.00.00",
-                "hl": "en",
-                "gl": "US",
-            },
+            "client": ctx_client,
         },
         "videoId": video_id,
     }
+    
+    # Add PO token for streaming data (bypasses cloud IP blocking)
+    if po_token:
+        payload["serviceIntegrityDimensions"] = {
+            "poToken": po_token,
+        }
+        logger.debug(f"InnerTube request with PO token for {video_id}")
 
     url = f"{INNERTUBE_BASE}/player?key={INNERTUBE_API_KEY}"
     try:
@@ -257,9 +278,9 @@ def _extract_text(text_obj: Dict) -> str:
 
 
 # ─── Fast Stream URL Extraction ──────────────────────────────────────────────
-async def get_stream_urls_fast(video_id: str) -> Dict:
+async def get_stream_urls_fast(video_id: str, po_token: str = None, visitor_data: str = None) -> Dict:
     """Get audio/video stream URLs from InnerTube."""
-    data = await get_video_info_fast(video_id)
+    data = await get_video_info_fast(video_id, po_token=po_token, visitor_data=visitor_data)
     if not data:
         return {"audio": None, "video": None}
 

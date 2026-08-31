@@ -920,12 +920,31 @@ async def get_audio(
         if not video_id:
             raise HTTPException(status_code=400, detail="Invalid YouTube URL")
 
-        # Fast path: InnerTube stream URLs
+        # Step 1: Get PO token for InnerTube (allows streaming from cloud IPs)
         audio = None
         meta = None
         t0 = time.time()
+        po_token = None
+        visitor_data = None
+
+        from po_token_helper import check_server as pot_check, get_po_token_full
+        if pot_check():
+            try:
+                pot_result = get_po_token_full("web", video_id)
+                if pot_result:
+                    po_token = pot_result.get("po_token")
+                    visitor_data = pot_result.get("visitor_data", "")
+                    logger.info(f"PO token acquired for {video_id} ({time.time()-t0:.1f}s)")
+            except Exception as e:
+                logger.warning(f"PO token failed: {e}")
+
+        # Step 2: InnerTube player request with PO token (returns streaming URLs)
         try:
-            raw = await get_video_info_fast(video_id)
+            raw = await get_video_info_fast(
+                video_id,
+                po_token=po_token,
+                visitor_data=visitor_data,
+            )
             if raw:
                 meta = parse_video_info(raw, video_id)
                 sd = raw.get("streamingData", {})
@@ -961,12 +980,17 @@ async def get_audio(
         except Exception as e:
             logger.warning(f"InnerTube audio failed for {video_id}: {e}")
 
-        # Fallback: InnerTube through proxy (faster than yt-dlp)
+        # Step 3: Fallback - InnerTube through proxy with PO token
         if not audio or not meta:
             proxy = get_proxy_for_request()
             if proxy:
                 try:
-                    raw = await get_video_info_fast(video_id, proxy=proxy)
+                    raw = await get_video_info_fast(
+                        video_id,
+                        proxy=proxy,
+                        po_token=po_token,
+                        visitor_data=visitor_data,
+                    )
                     if raw:
                         if not meta:
                             meta = parse_video_info(raw, video_id)
@@ -1001,7 +1025,18 @@ async def get_audio(
                 except Exception as e:
                     logger.warning(f"InnerTube proxy audio failed: {e}")
 
-        # Final fallback: return metadata with error
+        # Step 4: Final fallback - yt-dlp with PO token + mweb
+        if not audio:
+            try:
+                info = await extract_info(url)
+                audio = pick_best_audio_url(info)
+                if not meta:
+                    meta = build_video_info(info)
+                logger.info(f"yt-dlp fallback audio for {video_id}")
+            except Exception as e:
+                logger.warning(f"yt-dlp audio fallback failed: {e}")
+
+        # Step 5: Return error if nothing worked
         if not audio or not meta:
             if not meta:
                 raise HTTPException(status_code=503, detail="Audio unavailable")
