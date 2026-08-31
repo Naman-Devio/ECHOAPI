@@ -289,7 +289,7 @@ YDL_BASE_OPTS = {
     # Without PO tokens: 'tv_embedded' only returns combined itag=18
     "extractor_args": {
         "youtube": {
-            "player_skip": ["webpage", "configs"],  # Skip heavy parsing
+            # Do NOT use player_skip - it prevents full format listing
         }
     },
 
@@ -920,150 +920,51 @@ async def get_audio(
         if not video_id:
             raise HTTPException(status_code=400, detail="Invalid YouTube URL")
 
-        # Step 1: Get PO token for InnerTube (allows streaming from cloud IPs)
-        audio = None
+        # Step 1: Get metadata via InnerTube (fast, works from any IP)
         meta = None
         t0 = time.time()
-        po_token = None
-        visitor_data = None
-
-        from po_token_helper import check_server as pot_check, get_po_token_full
-        if pot_check():
-            try:
-                pot_result = get_po_token_full("web", video_id)
-                if pot_result:
-                    po_token = pot_result.get("po_token")
-                    visitor_data = pot_result.get("visitor_data", "")
-                    logger.info(f"PO token acquired for {video_id} ({time.time()-t0:.1f}s)")
-            except Exception as e:
-                logger.warning(f"PO token failed: {e}")
-
-        # Step 2: InnerTube player request with PO token (returns streaming URLs)
         try:
-            raw = await get_video_info_fast(
-                video_id,
-                po_token=po_token,
-                visitor_data=visitor_data,
-            )
+            raw = await get_video_info_fast(video_id)
             if raw:
                 meta = parse_video_info(raw, video_id)
-                sd = raw.get("streamingData", {})
-                formats = sd.get("formats", [])
-                adaptive = sd.get("adaptiveFormats", [])
-
-                # 1. Try audio-only adaptive format
-                audio_streams = [f for f in adaptive if "audio" in f.get("mimeType", "") and f.get("url")]
-                if audio_streams:
-                    best = max(audio_streams, key=lambda x: x.get("bitrate", 0))
-                    audio = {
-                        "url": best["url"],
-                        "ext": "webm" if "webm" in best.get("mimeType", "") else "m4a",
-                        "abr": best.get("bitrate", 0) // 1000 if best.get("bitrate") else None,
-                        "filesize": None,
-                        "is_audio_only": True,
-                    }
-                    logger.info(f"✓ InnerTube audio-only for {video_id} in {time.time()-t0:.2f}s")
-
-                # 2. Try combined format (itag=18 style)
-                if not audio:
-                    combined = [f for f in formats if f.get("url") and f.get("audioQuality")]
-                    if combined:
-                        best = combined[0]
-                        audio = {
-                            "url": best["url"],
-                            "ext": "mp4",
-                            "abr": None,
-                            "filesize": None,
-                            "is_audio_only": False,
-                        }
-                        logger.info(f"✓ InnerTube combined stream for {video_id} in {time.time()-t0:.2f}s")
+                logger.info(f"InnerTube metadata for {video_id} in {time.time()-t0:.2f}s")
         except Exception as e:
-            logger.warning(f"InnerTube audio failed for {video_id}: {e}")
+            logger.warning(f"InnerTube metadata failed: {e}")
 
-        # Step 3: Fallback - InnerTube through proxy with PO token
-        if not audio or not meta:
-            proxy = get_proxy_for_request()
-            if proxy:
-                try:
-                    raw = await get_video_info_fast(
-                        video_id,
-                        proxy=proxy,
-                        po_token=po_token,
-                        visitor_data=visitor_data,
-                    )
-                    if raw:
-                        if not meta:
-                            meta = parse_video_info(raw, video_id)
-                        sd = raw.get("streamingData", {})
-                        adaptive = sd.get("adaptiveFormats", [])
-                        formats = sd.get("formats", [])
-
-                        # Try audio-only
-                        audio_streams = [f for f in adaptive if "audio" in f.get("mimeType", "") and f.get("url")]
-                        if audio_streams:
-                            best = max(audio_streams, key=lambda x: x.get("bitrate", 0))
-                            audio = {
-                                "url": best["url"],
-                                "ext": "webm" if "webm" in best.get("mimeType", "") else "m4a",
-                                "abr": best.get("bitrate", 0) // 1000 if best.get("bitrate") else None,
-                                "filesize": None,
-                                "is_audio_only": True,
-                            }
-                            logger.info(f"✓ InnerTube proxy audio-only for {video_id}")
-                        # Try combined
-                        if not audio:
-                            combined = [f for f in formats if f.get("url") and f.get("audioQuality")]
-                            if combined:
-                                audio = {
-                                    "url": combined[0]["url"],
-                                    "ext": "mp4",
-                                    "abr": None,
-                                    "filesize": None,
-                                    "is_audio_only": False,
-                                }
-                                logger.info(f"✓ InnerTube proxy combined for {video_id}")
-                except Exception as e:
-                    logger.warning(f"InnerTube proxy audio failed: {e}")
-
-        # Step 4: Final fallback - yt-dlp with PO token + mweb
-        if not audio:
-            try:
-                info = await extract_info(url)
-                audio = pick_best_audio_url(info)
+        # Step 2: Get streaming URL via yt-dlp with PO token + mweb (primary method)
+        audio = None
+        try:
+            info = await extract_info(url)
+            audio = pick_best_audio_url(info)
+            if audio.get("url"):
                 if not meta:
                     meta = build_video_info(info)
-                logger.info(f"yt-dlp fallback audio for {video_id}")
-            except Exception as e:
-                logger.warning(f"yt-dlp audio fallback failed: {e}")
+                logger.info(f"yt-dlp audio for {video_id} (audio_only=" + str(audio.get("is_audio_only")) + ")")
+        except Exception as e:
+            logger.warning(f"yt-dlp audio failed: {e}")
 
-        # Step 5: Return error if nothing worked
-        if not audio or not meta:
-            if not meta:
-                raise HTTPException(status_code=503, detail="Audio unavailable")
-            audio = {
-                "url": None,
-                "ext": None,
-                "abr": None,
-                "filesize": None,
-                "is_audio_only": False,
-                "note": "Stream URL unavailable. Try /api/info for metadata.",
-            }
+        # Step 3: Return result or error
+        if not audio or not audio.get("url") or not meta:
+            raise HTTPException(
+                status_code=503,
+                detail="Audio streaming unavailable. YouTube may be blocking this server's IP."
+            )
 
         is_audio_only = audio.get("is_audio_only", False)
 
         cached = {
             "id": meta["id"],
             "title": meta["title"],
-            "thumbnail": meta["thumbnail"],
-            "duration": meta["duration"],
-            "duration_string": meta["duration_string"],
-            "uploader": meta["uploader"],
+            "thumbnail": meta.get("thumbnail", ""),
+            "duration": meta.get("duration"),
+            "duration_string": meta.get("duration_string", ""),
+            "uploader": meta.get("uploader", ""),
             "audio": audio,
             "format_type": "audio_only" if is_audio_only else "video_audio_combined",
-            "note": "Audio-only stream" if is_audio_only else "Combined stream (audio+video) - YouTube requires PO tokens or cookies for audio-only streams",
-            "method": "innertube" if is_audio_only else "yt-dlp",
+            "note": "Audio-only stream" if is_audio_only else "Combined stream",
+            "method": "yt-dlp",
         }
-        await cache_set(cache_key, cached, ttl=1800)  # 30 min (URLs expire)
+        await cache_set(cache_key, cached, ttl=1800)
 
     if redirect:
         stream_url = cached.get("audio", {}).get("url")
