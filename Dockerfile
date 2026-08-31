@@ -6,7 +6,7 @@ FROM python:3.12-slim AS base
 
 # System deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ffmpeg gcc g++ && \
+    curl ffmpeg gcc g++ unzip && \
     rm -rf /var/lib/apt/lists/*
 
 # Deno for yt-dlp JS runtime
