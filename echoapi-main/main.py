@@ -961,21 +961,27 @@ async def get_audio(
         except Exception as e:
             logger.warning(f"InnerTube audio failed for {video_id}: {e}")
 
-        # Fallback: yt-dlp (slower, needs PO tokens)
+        # Fallback: yt-dlp with bestaudio/best selector
         if not audio or not meta:
             try:
-                audio_opts = {"format": "bestaudio/best"}
-                info = await extract_info(url, audio_opts)
+                info = await extract_info(url, {"format": "bestaudio/best"})
                 audio = pick_best_audio_url(info, quality)
                 if not meta:
                     meta = build_video_info(info)
-            except Exception as e:
-                logger.warning(f"yt-dlp audio fallback failed: {e}")
-                # Final fallback: return metadata only with error
-                if not meta:
-                    raise HTTPException(status_code=503, detail="Audio streams unavailable. YouTube requires PO tokens for audio extraction. Info/search endpoints still work.")
-                if not audio:
-                    raise HTTPException(status_code=503, detail="Audio stream URL unavailable. Try /api/info for metadata.")
+            except Exception as e1:
+                logger.warning(f"yt-dlp bestaudio failed: {e1}")
+                # Try without format selector (let yt-dlp auto-pick)
+                try:
+                    info = await extract_info(url)
+                    audio = pick_best_audio_url(info, quality)
+                    if not meta:
+                        meta = build_video_info(info)
+                except Exception as e2:
+                    logger.warning(f"yt-dlp fallback also failed: {e2}")
+                    if not meta:
+                        raise HTTPException(status_code=503, detail="Audio unavailable. Info/search still work.")
+                    if not audio:
+                        raise HTTPException(status_code=503, detail="Audio URL unavailable. Try /api/info.")
 
         is_audio_only = audio.get("is_audio_only", False)
 
