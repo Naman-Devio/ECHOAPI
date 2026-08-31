@@ -9,7 +9,7 @@ python-multipart==0.0.12
 python-dotenv==1.0.1
 
 # ── YouTube Extraction ───────────────────────────────────────────────────────
-yt-dlp==2024.10.22
+yt-dlp>=2025.05.22
 httpx[http2]==0.27.2
 bgutil-ytdlp-pot-provider
 
