@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# API Keys (IMPORTANT - don't commit these!)
+api_keys.json
+*.key
+*.pem
+
+# Environment
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Redis
+dump.rdb
+
+# Temporary files
+*.tmp
+*.bak
+
+# Large files
+YTAPI-main.zip
+YTAPI-main/
+
+# Proxy files (too large)
+proxies/http.txt
+proxies/socks4.txt
+proxies/socks5.txt
+proxies/working/*.txt

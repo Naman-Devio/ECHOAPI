@@ -1,0 +1,14 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+yt-dlp==2024.10.22
+redis==5.1.1
+httpx==0.27.2
+python-multipart==0.0.12
+orjson==3.10.7
+uvloop==0.20.0
+tenacity==9.0.0
+psutil==6.1.1
+aiohttp==3.10.10
+python-dotenv==1.0.1
+browser-cookie3==0.19.1
+bgutil-ytdlp-pot-provider
