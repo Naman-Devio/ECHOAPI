@@ -66,8 +66,8 @@ def extract_video_id(url: str) -> Optional[str]:
 
 
 # ─── Fast Video Info (~300-800ms) ───────────────────────────────────────────
-async def get_video_info_fast(video_id: str, client: str = "web") -> Optional[Dict]:
-    """Fetch video info directly from YouTube InnerTube API (async, no proxy)."""
+async def get_video_info_fast(video_id: str, client: str = "web", proxy: str = None) -> Optional[Dict]:
+    """Fetch video info directly from YouTube InnerTube API (async)."""
     payload = {
         "context": {
             "client": {
@@ -82,10 +82,17 @@ async def get_video_info_fast(video_id: str, client: str = "web") -> Optional[Di
 
     url = f"{INNERTUBE_BASE}/player?key={INNERTUBE_API_KEY}"
     try:
-        c = await _get_client()
-        resp = await c.post(url, json=payload, headers=WEB_HEADERS)
-        resp.raise_for_status()
-        return resp.json()
+        if proxy:
+            # Use a one-off client with proxy
+            async with httpx.AsyncClient(proxy=proxy, timeout=15.0) as c:
+                resp = await c.post(url, json=payload, headers=WEB_HEADERS)
+                resp.raise_for_status()
+                return resp.json()
+        else:
+            c = await _get_client()
+            resp = await c.post(url, json=payload, headers=WEB_HEADERS)
+            resp.raise_for_status()
+            return resp.json()
     except Exception as e:
         logger.warning(f"InnerTube player failed for {video_id}: {e}")
         return None

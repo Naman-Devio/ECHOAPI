@@ -961,28 +961,58 @@ async def get_audio(
         except Exception as e:
             logger.warning(f"InnerTube audio failed for {video_id}: {e}")
 
-        # Fallback: yt-dlp (only try once, no retries for speed)
+        # Fallback: InnerTube through proxy (faster than yt-dlp)
         if not audio or not meta:
-            try:
-                info = await extract_info(url, {"format": "bestaudio/best"})
-                audio = pick_best_audio_url(info, quality)
-                if not meta:
-                    meta = build_video_info(info)
-            except Exception as e:
-                logger.warning(f"yt-dlp audio failed: {e}")
-                # On cloud IPs, YouTube blocks streaming data entirely
-                # Return metadata-only response with clear message
-                if not meta:
-                    raise HTTPException(status_code=503, detail="Audio streams unavailable. YouTube blocks streaming from cloud IPs.")
-                # We have metadata but no stream URL — return what we have
-                audio = {
-                    "url": None,
-                    "ext": None,
-                    "abr": None,
-                    "filesize": None,
-                    "is_audio_only": False,
-                    "note": "Stream URL unavailable from this server. Use /api/info for metadata.",
-                }
+            proxy = get_proxy_for_request()
+            if proxy:
+                try:
+                    raw = await get_video_info_fast(video_id, proxy=proxy)
+                    if raw:
+                        if not meta:
+                            meta = parse_video_info(raw, video_id)
+                        sd = raw.get("streamingData", {})
+                        adaptive = sd.get("adaptiveFormats", [])
+                        formats = sd.get("formats", [])
+
+                        # Try audio-only
+                        audio_streams = [f for f in adaptive if "audio" in f.get("mimeType", "") and f.get("url")]
+                        if audio_streams:
+                            best = max(audio_streams, key=lambda x: x.get("bitrate", 0))
+                            audio = {
+                                "url": best["url"],
+                                "ext": "webm" if "webm" in best.get("mimeType", "") else "m4a",
+                                "abr": best.get("bitrate", 0) // 1000 if best.get("bitrate") else None,
+                                "filesize": None,
+                                "is_audio_only": True,
+                            }
+                            logger.info(f"✓ InnerTube proxy audio-only for {video_id}")
+                        # Try combined
+                        if not audio:
+                            combined = [f for f in formats if f.get("url") and f.get("audioQuality")]
+                            if combined:
+                                audio = {
+                                    "url": combined[0]["url"],
+                                    "ext": "mp4",
+                                    "abr": None,
+                                    "filesize": None,
+                                    "is_audio_only": False,
+                                }
+                                logger.info(f"✓ InnerTube proxy combined for {video_id}")
+                except Exception as e:
+                    logger.warning(f"InnerTube proxy audio failed: {e}")
+
+        # Final fallback: return metadata with error
+        if not audio or not meta:
+            if not meta:
+                raise HTTPException(status_code=503, detail="Audio unavailable")
+            audio = {
+                "url": None,
+                "ext": None,
+                "abr": None,
+                "filesize": None,
+                "is_audio_only": False,
+                "note": "Stream URL unavailable. Try /api/info for metadata.",
+            }
 
         is_audio_only = audio.get("is_audio_only", False)
 
