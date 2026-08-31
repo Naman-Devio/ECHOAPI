@@ -489,7 +489,7 @@ def _run_ytdlp(url: str, extra_opts: dict = {}) -> dict:
                         "player_client": ["mweb"],
                         "po_token": pot_args["youtube"]["po_token"],
                     }
-                    logger.debug(f"Added mweb + PO token for video {vid}")
+                    logger.info(f"Added mweb + PO token for video {vid}")
         
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)

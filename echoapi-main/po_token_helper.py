@@ -1,11 +1,8 @@
 """
 PO Token Helper — Direct extraction from bgutil server
 ========================================================
-Bypasses the yt-dlp plugin connection issue on Windows.
-Manually fetches PO tokens from the bgutil HTTP server
-and passes them to yt-dlp via extractor args.
-
-Also provides visitor_data for InnerTube player requests.
+Fetches PO tokens from the bgutil HTTP server for use with yt-dlp.
+The server handles visitor_data generation internally.
 """
 
 import json
@@ -35,8 +32,8 @@ def _is_server_available() -> bool:
 
 def get_po_token_full(client: str = "web", video_id: str = "") -> Optional[Dict[str, Any]]:
     """
-    Get a PO token AND visitor_data from the bgutil server.
-
+    Get a PO token from the bgutil server.
+    
     Returns:
         Dict with 'po_token' and 'visitor_data' keys, or None
     """
@@ -66,16 +63,14 @@ def get_po_token_full(client: str = "web", video_id: str = "") -> Optional[Dict[
         if resp.status_code == 200:
             data = resp.json()
             token = data.get("poToken")
-            visitor = data.get("visitorData", "")
             if token:
-                # Cache the token
                 _token_cache[cache_key] = {
                     "token": token,
-                    "visitor_data": visitor,
+                    "visitor_data": "",
                     "expires": time.time() + _CACHE_TTL,
                 }
-                logger.info(f"✓ Got PO token for {client} + visitor_data (expires in {_CACHE_TTL}s)")
-                return {"po_token": token, "visitor_data": visitor}
+                logger.info(f"✓ Got PO token for {client} (expires in {_CACHE_TTL}s)")
+                return {"po_token": token, "visitor_data": ""}
         else:
             logger.warning(f"PO token server returned {resp.status_code}: {resp.text[:200]}")
     except Exception as e:
@@ -85,9 +80,7 @@ def get_po_token_full(client: str = "web", video_id: str = "") -> Optional[Dict[
 
 
 def get_po_token(client: str = "web", video_id: str = "") -> Optional[str]:
-    """
-    Get a PO token from the bgutil server (backward compatible).
-    """
+    """Get a PO token (backward compatible)."""
     result = get_po_token_full(client, video_id)
     return result.get("po_token") if result else None
 
@@ -95,13 +88,13 @@ def get_po_token(client: str = "web", video_id: str = "") -> Optional[str]:
 def get_po_token_extractor_args(client: str = "web", video_id: str = "") -> Dict[str, Any]:
     """
     Get extractor args dict with PO token included.
-    Pass this to yt-dlp's extractor_args.
+    Pass this to yt-dlp's extractor_args for mweb/web clients.
     """
-    token = get_po_token(client, video_id)
-    if token:
+    result = get_po_token_full(client, video_id)
+    if result and result.get("po_token"):
         return {
             "youtube": {
-                "po_token": [f"{client}.gvs+{token}"],
+                "po_token": [f"{client}.gvs+{result['po_token']}"],
             }
         }
     return {}

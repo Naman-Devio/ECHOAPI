@@ -22,7 +22,9 @@ WORKDIR /app
 
 # Install Python deps
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir 'yt-dlp==2026.8.19' && \
+    python -c "import yt_dlp; print(f'yt-dlp {yt_dlp.version.__version__}')"
 
 # Install PO token server
 RUN git clone --single-branch --branch 1.3.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil && \
