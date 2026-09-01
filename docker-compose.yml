@@ -14,6 +14,21 @@
 #   - api: EchoTube API server
 
 services:
+  # ── Cloudflare WARP (free trusted proxy) ──────────────────────────────────
+  # YouTube treats Cloudflare IPs as trusted — bypasses bot detection
+  # Accessible as socks5://warp-proxy:40000 or http://warp-proxy:40000
+  warp-proxy:
+    image: seiry/cloudflare-warp-proxy:latest
+    ports:
+      - "40000:40000"  # SOCKS5/HTTP proxy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-x", "socks5://127.0.0.1:40000", "-f", "https://www.cloudflare.com/cdn-cgi/trace"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
   # ── Redis (caching layer) ────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
@@ -53,7 +68,11 @@ services:
       - "${PORT:-8000}:8000"
     environment:
       - REDIS_URL=redis://redis:6379
-      - USE_PROXIES=${USE_PROXIES:-true}
+      # WARP proxy (free, trusted by YouTube)
+      - USE_WARP=true
+      - WARP_PROXY=socks5://warp-proxy:40000
+      # Fallback proxies (WebShare/ProxyScrap)
+      - USE_PROXIES=${USE_PROXIES:-false}
       - ENABLE_PROXY_CHECKER=${ENABLE_PROXY_CHECKER:-false}
       - WORKERS=${WORKERS:-2}
       - CACHE_TTL=${CACHE_TTL:-3600}
@@ -67,6 +86,8 @@ services:
       redis:
         condition: service_healthy
       pot-provider:
+        condition: service_healthy
+      warp-proxy:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:

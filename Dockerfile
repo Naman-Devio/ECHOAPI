@@ -1,12 +1,21 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# EchoTube API — Production Dockerfile (API + PO Token Server)
+# EchoTube API — Production Dockerfile (API + PO Token Server + WARP Proxy)
 # ══════════════════════════════════════════════════════════════════════════════
 
 FROM python:3.12-slim AS base
 
 # System deps + Node.js + Deno
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ffmpeg gcc g++ unzip git && \
+    curl ffmpeg gcc g++ unzip git gnupg lsb-release apt-transport-https && \
+    rm -rf /var/lib/apt/lists/*
+
+# ── Install Cloudflare WARP CLI ──
+# WARP provides a free, trusted proxy that YouTube doesn't block
+RUN mkdir -p --mode=0755 /usr/share/keyrings && \
+    curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/cloudflare-client.list > /dev/null && \
+    apt-get update && \
+    apt-get install -y cloudflare-warp && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Node.js (for PO token server)

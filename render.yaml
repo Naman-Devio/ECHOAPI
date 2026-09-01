@@ -17,8 +17,12 @@ services:
     envVars:
       - key: PORT
         value: 8000
-      - key: USE_PROXIES
+      - key: USE_WARP
         value: "true"
+      - key: WARP_PROXY
+        value: "socks5://127.0.0.1:40000"
+      - key: USE_PROXIES
+        value: "false"
       - key: ENABLE_PROXY_CHECKER
         value: "false"
       - key: LOG_LEVEL

@@ -57,11 +57,31 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ─── Proxy Manager Setup ──────────────────────────────────────────────────────
-USE_PROXIES = os.getenv("USE_PROXIES", "false").lower() == "true"  # Changed default to false
+# Proxy priority: WARP (free, trusted) > WebShare/ProxyScrap > Direct
+USE_WARP = os.getenv("USE_WARP", "false").lower() == "true"
+WARP_PROXY = os.getenv("WARP_PROXY", "socks5://127.0.0.1:40000")  # Cloudflare WARP
+USE_PROXIES = os.getenv("USE_PROXIES", "false").lower() == "true"  # WebShare/ProxyScrap
 PROXY_TYPE = os.getenv("PROXY_TYPE", "any")  # any, http, socks4, socks5
 ENABLE_PROXY_CHECKER = os.getenv("ENABLE_PROXY_CHECKER", "true").lower() == "true"
 
 proxy_checker = None
+
+# Auto-detect WARP if available
+if not USE_WARP:
+    import socket as _socket
+    try:
+        _s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        _s.settimeout(1.0)
+        _s.connect(("127.0.0.1", 40000))
+        _s.close()
+        USE_WARP = True
+        logger.info("✓ Cloudflare WARP auto-detected on localhost:40000")
+    except (ConnectionRefusedError, _socket.timeout, OSError):
+        pass
+
+if USE_WARP:
+    logger.info(f"✓ Cloudflare WARP proxy: {WARP_PROXY}")
+    logger.info(f"  → YouTube will see a trusted Cloudflare IP")
 
 if USE_PROXIES:
     try:
@@ -78,7 +98,10 @@ if USE_PROXIES:
         proxy_manager = None
 else:
     proxy_manager = None
-    logger.info("Running WITHOUT proxies (USE_PROXIES=false) - Direct connection to YouTube")
+    if not USE_WARP:
+        logger.info("Running WITHOUT proxies (USE_WARP=false, USE_PROXIES=false)")
+    else:
+        logger.info("Running with WARP only (USE_PROXIES=false)")
 
 # ─── Optional Redis (graceful fallback to in-memory) ──────────────────────────
 try:
@@ -371,27 +394,39 @@ _proxy_failures = 0
 _max_proxy_failures = 3  # Switch proxy after 3 failures
 
 def get_proxy_for_request():
-    """Get proxy for yt-dlp request with automatic rotation"""
+    """Get proxy for yt-dlp request with automatic rotation.
+    
+    Priority chain:
+      1. Cloudflare WARP (free, trusted IPs, best for YouTube)
+      2. WebShare/ProxyScrap proxies (if configured)
+      3. Direct connection (no proxy)
+    """
     global _current_proxy, _proxy_failures
     
-    if not USE_PROXIES or not proxy_manager:
-        return None
+    # ── Priority 1: Cloudflare WARP ──
+    if USE_WARP:
+        return WARP_PROXY
     
-    # Switch proxy if current one failed too many times
-    if _current_proxy and _proxy_failures >= _max_proxy_failures:
-        logger.warning(f"Proxy {_current_proxy} failed {_proxy_failures} times, switching...")
-        proxy_manager.mark_failed(_current_proxy)
-        _current_proxy = None
-        _proxy_failures = 0
+    # ── Priority 2: WebShare/ProxyScrap proxies ──
+    if USE_PROXIES and proxy_manager:
+        # Switch proxy if current one failed too many times
+        if _current_proxy and _proxy_failures >= _max_proxy_failures:
+            logger.warning(f"Proxy {_current_proxy} failed {_proxy_failures} times, switching...")
+            proxy_manager.mark_failed(_current_proxy)
+            _current_proxy = None
+            _proxy_failures = 0
+        
+        # Get new proxy if needed
+        if not _current_proxy:
+            _current_proxy = proxy_manager.get_random_proxy(PROXY_TYPE)
+            _proxy_failures = 0
+            if _current_proxy:
+                logger.info(f"Using proxy: {_current_proxy}")
+        
+        return _current_proxy
     
-    # Get new proxy if needed
-    if not _current_proxy:
-        _current_proxy = proxy_manager.get_random_proxy(PROXY_TYPE)
-        _proxy_failures = 0
-        if _current_proxy:
-            logger.info(f"Using proxy: {_current_proxy}")
-    
-    return _current_proxy
+    # ── Priority 3: Direct connection ──
+    return None
 
 def check_circuit_breaker():
     """Check if circuit breaker allows requests"""
