@@ -11,26 +11,39 @@ echo "Starting Cloudflare WARP proxy..."
 
 # Check if warp-cli is available
 if command -v warp-cli &> /dev/null; then
+    echo "  warp-cli found, setting up WARP..."
+    
     # Register WARP (first time only, non-interactive)
     warp-cli registration new 2>/dev/null || true
+    sleep 1
     
     # Set mode to proxy (SOCKS5 on port 40000)
     warp-cli mode proxy 2>/dev/null || true
+    sleep 1
     
     # Connect to WARP
     warp-cli connect 2>/dev/null
-    WARP_STATUS=$?
+    sleep 2
     
-    # Wait for WARP to establish connection
-    sleep 3
+    # Wait up to 15 seconds for WARP to fully connect
+    WARP_READY=false
+    for i in $(seq 1 15); do
+        WARP_STATUS_OUTPUT=$(warp-cli status 2>&1)
+        if echo "$WARP_STATUS_OUTPUT" | grep -qi "connected"; then
+            WARP_READY=true
+            break
+        fi
+        echo "  Waiting for WARP... ($i/15)"
+        sleep 1
+    done
     
-    # Verify WARP is working
-    if warp-cli status 2>/dev/null | grep -q "Connected"; then
+    if [ "$WARP_READY" = true ]; then
         echo "✓ Cloudflare WARP connected (SOCKS5 on localhost:40000)"
         export USE_WARP=true
         export WARP_PROXY=socks5://127.0.0.1:40000
     else
-        echo "⚠ Cloudflare WARP status check failed, attempting anyway..."
+        echo "⚠ WARP status unclear (may still be connecting), attempting anyway..."
+        echo "  Last status: $WARP_STATUS_OUTPUT"
         export USE_WARP=true
         export WARP_PROXY=socks5://127.0.0.1:40000
     fi
@@ -40,8 +53,8 @@ else
     export WARP_PROXY=""
 fi
 
-# Wait for WARP to be ready
-sleep 2
+# Extra wait for WARP proxy to be fully ready
+sleep 3
 
 # ── Step 2: Start PO Token server in background ──
 echo "Starting PO Token server on port 4416..."

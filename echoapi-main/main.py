@@ -339,22 +339,32 @@ else:
 # With PO tokens: all adaptive formats available
 POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "http://127.0.0.1:4416")
 
-# Check if PO token provider is reachable
-def _check_pot_provider() -> bool:
-    """Check if PO token provider is running and reachable."""
+# Check if PO token provider is reachable (with retries for startup timing)
+def _check_pot_provider(max_retries: int = 5, delay: float = 2.0) -> bool:
+    """Check if PO token provider is running and reachable.
+    
+    Retries with delay because the POT server may start after main.py.
+    """
     import socket
-    try:
-        from urllib.parse import urlparse
-        parsed = urlparse(POT_PROVIDER_URL)
-        host = parsed.hostname or "127.0.0.1"
-        port = parsed.port or 4416
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(1.0)
-        s.connect((host, port))
-        s.close()
-        return True
-    except (socket.timeout, ConnectionRefusedError, OSError):
-        return False
+    import time
+    from urllib.parse import urlparse
+    parsed = urlparse(POT_PROVIDER_URL)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 4416
+    
+    for attempt in range(max_retries):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1.0)
+            s.connect((host, port))
+            s.close()
+            return True
+        except (socket.timeout, ConnectionRefusedError, OSError):
+            if attempt < max_retries - 1:
+                logger.info(f"  PO Token server not ready, retrying in {delay}s... (attempt {attempt+1}/{max_retries})")
+                time.sleep(delay)
+            continue
+    return False
 
 POT_AVAILABLE = _check_pot_provider()
 
