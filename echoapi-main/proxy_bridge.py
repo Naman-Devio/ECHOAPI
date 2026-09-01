@@ -18,6 +18,7 @@ import time
 import logging
 import argparse
 import sys
+import requests
 from pathlib import Path
 from typing import Dict, List
 
@@ -33,6 +34,10 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 
 # ProxyHarvester output (sibling directory)
 SCRAPER_JSON = SCRIPT_DIR.parent / "proxyscrap" / "proxy_pool" / "working_proxies.json"
+
+# ── WebShare API Config ───────────────────────────────────────────────────────
+WEBSHARE_API_TOKEN = os.getenv("WEBSHARE_API_TOKEN", "")
+WEBSHARE_API_BASE = "https://proxy.webshare.io/api/v2"
 
 # YT API proxy input directory
 PROXIES_DIR = SCRIPT_DIR / "proxies"
@@ -188,6 +193,71 @@ def write_proxy_files(grouped: Dict[str, List[str]], stats: dict, raw_proxy_data
     return total
 
 
+def fetch_webshare_proxies(api_token: str) -> List[dict]:
+    """Fetch proxies from WebShare API.
+    
+    Steps:
+      1. Get download token from /proxy/config/
+      2. Download proxy list using the token
+      3. Parse ip:port:username:password format
+    
+    Returns list of dicts with host, port, user, pass, protocol keys.
+    """
+    if not api_token:
+        return []
+
+    headers = {"Authorization": f"Token {api_token}"}
+
+    # Step 1: Get download token
+    try:
+        resp = requests.get(f"{WEBSHARE_API_BASE}/proxy/config/", headers=headers, timeout=15)
+        if resp.status_code != 200:
+            logger.error(f"WebShare config failed: HTTP {resp.status_code}")
+            return []
+        config = resp.json()
+        download_token = config.get("proxy_list_download_token")
+        if not download_token:
+            logger.error("No download token found in WebShare config")
+            return []
+        logger.info(f"  WebShare download token: {download_token[:15]}...")
+    except Exception as e:
+        logger.error(f"WebShare config error: {e}")
+        return []
+
+    # Step 2: Download proxy list
+    try:
+        dl_url = f"{WEBSHARE_API_BASE}/proxy/list/download/{download_token}/-/any/username/direct/-/"
+        resp = requests.get(dl_url, timeout=15)
+        if resp.status_code != 200:
+            logger.error(f"WebShare download failed: HTTP {resp.status_code}")
+            return []
+        lines = [l.strip() for l in resp.text.strip().split("\n") if l.strip()]
+        logger.info(f"  Downloaded {len(lines)} proxies from WebShare")
+    except Exception as e:
+        logger.error(f"WebShare download error: {e}")
+        return []
+
+    # Step 3: Parse ip:port:username:password
+    proxies = []
+    for line in lines:
+        parts = line.split(":")
+        if len(parts) == 4:
+            host, port, user, pwd = parts
+            try:
+                proxies.append({
+                    "host": host,
+                    "port": int(port),
+                    "user": user,
+                    "pass": pwd,
+                    "protocol": "http",
+                })
+            except ValueError:
+                continue
+
+    logger.info(f"  Parsed {len(proxies)} WebShare proxies")
+    return proxies
+
+
 def get_scraper_stats(json_path: Path) -> dict:
     """Get stats from the harvester's stats.json if available."""
     stats_path = json_path.parent / "stats.json"
@@ -201,22 +271,52 @@ def get_scraper_stats(json_path: Path) -> dict:
 
 
 def sync_once():
-    """Single sync: read scraper output → split → write API proxy files."""
+    """Single sync: fetch proxies from all sources → split → write API proxy files.
+    
+    Sources (in priority order):
+      1. WebShare API (if WEBSHARE_API_TOKEN is set)
+      2. ProxyScrap (if working_proxies.json exists)
+    """
     ensure_dirs()
 
-    proxies = load_scraper_proxies(SCRAPER_JSON)
-    if not proxies:
-        logger.warning("No proxies to sync")
+    all_proxies: List[dict] = []
+    source_stats: dict = {}
+
+    # ── Source 1: WebShare API ──
+    if WEBSHARE_API_TOKEN:
+        logger.info("Fetching from WebShare API...")
+        ws_proxies = fetch_webshare_proxies(WEBSHARE_API_TOKEN)
+        if ws_proxies:
+            all_proxies.extend(ws_proxies)
+            source_stats["webshare"] = len(ws_proxies)
+            logger.info(f"  ✓ WebShare: {len(ws_proxies)} proxies")
+        else:
+            logger.warning("  WebShare returned 0 proxies")
+
+    # ── Source 2: ProxyScrap ──
+    scraper_proxies = load_scraper_proxies(SCRAPER_JSON)
+    if scraper_proxies:
+        all_proxies.extend(scraper_proxies)
+        source_stats["proxyscrap"] = len(scraper_proxies)
+
+    if not all_proxies:
+        logger.warning("No proxies from any source")
         return 0
 
-    grouped = split_by_protocol(proxies)
-    stats = get_scraper_stats(SCRAPER_JSON)
+    # ── Dedup by host:port (WebShare first since they're higher quality) ──
+    seen = set()
+    deduped = []
+    for p in all_proxies:
+        key = f"{p.get('host', '')}:{p.get('port', '')}"
+        if key not in seen:
+            seen.add(key)
+            deduped.append(p)
+    all_proxies = deduped
 
-    # Log protocol breakdown
-    for proto, ips in grouped.items():
-        logger.info(f"  {proto:8s}: {len(ips)} proxies")
+    logger.info(f"  Total unique: {len(all_proxies)} proxies")
 
-    total = write_proxy_files(grouped, stats, raw_proxy_data=proxies)
+    grouped = split_by_protocol(all_proxies)
+    total = write_proxy_files(grouped, source_stats, raw_proxy_data=all_proxies)
     return total
 
 
@@ -311,6 +411,12 @@ Examples:
         help="Check interval in seconds (default: 300)",
     )
     parser.add_argument(
+        "--webshare-token", "-w",
+        type=str,
+        default=None,
+        help="WebShare API token (or set WEBSHARE_API_TOKEN env var)",
+    )
+    parser.add_argument(
         "--version", "-v",
         action="store_true",
         help="Show version",
@@ -319,15 +425,23 @@ Examples:
     args = parser.parse_args()
 
     if args.version:
-        print("Proxy Bridge v1.0.0")
+        print("Proxy Bridge v2.0.0 — with WebShare API support")
         sys.exit(0)
 
-    if not SCRAPER_JSON.exists():
-        logger.warning(f"Scraper JSON not found at: {SCRAPER_JSON}")
-        logger.warning("Make sure proxyscrap/ is a sibling directory to echoapi-main/")
-        logger.info(f"Expected path: {SCRAPER_JSON}")
+    # Override env token if provided via CLI
+    global WEBSHARE_API_TOKEN
+    if args.webshare_token:
+        WEBSHARE_API_TOKEN = args.webshare_token
+
+    if not WEBSHARE_API_TOKEN and not SCRAPER_JSON.exists():
+        logger.warning("No WebShare token AND no scraper JSON found")
+        logger.warning("Set WEBSHARE_API_TOKEN or run --webshare-token <token>")
+        logger.warning("Or make sure proxyscrap/ is a sibling directory")
         if not args.continuous:
             sys.exit(1)
+
+    logger.info(f"  WebShare API: {'✅ enabled' if WEBSHARE_API_TOKEN else '❌ disabled'}")
+    logger.info(f"  ProxyScrap:   {'✅ available' if SCRAPER_JSON.exists() else '❌ not found'}")
 
     if args.continuous:
         run_continuous(interval=args.interval)
@@ -336,7 +450,7 @@ Examples:
         if total > 0:
             logger.info(f"\n✓ Done: {total} proxies synced to {PROXIES_DIR}/")
         else:
-            logger.warning("\nNo proxies synced. Check scraper output.")
+            logger.warning("\nNo proxies synced.")
             sys.exit(1)
 
 

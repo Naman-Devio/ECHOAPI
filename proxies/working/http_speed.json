@@ -1,0 +1,52 @@
+[
+  {
+    "proxy": "ntkyocsk:1ojbl8d6jcam@198.105.121.200:6462",
+    "speed_seconds": 4.829,
+    "protocol": "http"
+  },
+  {
+    "proxy": "ntkyocsk:1ojbl8d6jcam@45.38.107.97:6014",
+    "speed_seconds": 5.359,
+    "protocol": "http"
+  },
+  {
+    "proxy": "ntkyocsk:1ojbl8d6jcam@31.58.9.4:6077",
+    "speed_seconds": 5.375,
+    "protocol": "http"
+  },
+  {
+    "proxy": "ntkyocsk:1ojbl8d6jcam@142.111.67.146:5611",
+    "speed_seconds": 5.375,
+    "protocol": "http"
+  },
+  {
+    "proxy": "ntkyocsk:1ojbl8d6jcam@64.137.96.74:6641",
+    "speed_seconds": 5.468,
+    "protocol": "http"
+  },
+  {
+    "proxy": "ntkyocsk:1ojbl8d6jcam@84.247.60.125:6095",
+    "speed_seconds": 5.719,
+    "protocol": "http"
+  },
+  {
+    "proxy": "ntkyocsk:1ojbl8d6jcam@198.23.243.226:6361",
+    "speed_seconds": 6.937,
+    "protocol": "http"
+  },
+  {
+    "proxy": "ntkyocsk:1ojbl8d6jcam@191.96.254.138:6185",
+    "speed_seconds": 7.297,
+    "protocol": "http"
+  },
+  {
+    "proxy": "ntkyocsk:1ojbl8d6jcam@38.154.185.97:6370",
+    "speed_seconds": 8.047,
+    "protocol": "http"
+  },
+  {
+    "proxy": "ntkyocsk:1ojbl8d6jcam@31.59.20.176:6754",
+    "speed_seconds": 8.375,
+    "protocol": "http"
+  }
+]
