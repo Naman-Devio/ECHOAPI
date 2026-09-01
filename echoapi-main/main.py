@@ -66,15 +66,29 @@ ENABLE_PROXY_CHECKER = os.getenv("ENABLE_PROXY_CHECKER", "true").lower() == "tru
 
 proxy_checker = None
 
-# Auto-detect WARP if available
+# Auto-detect WARP if available (verify port is actually listening)
+if USE_WARP:
+    import socket as _socket
+    try:
+        _s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        _s.settimeout(2.0)
+        _s.connect(("127.0.0.1", 40000))
+        _s.close()
+        logger.info("✓ Cloudflare WARP verified on localhost:40000")
+    except (ConnectionRefusedError, _socket.timeout, OSError):
+        logger.warning("⚠ WARP port 40000 not reachable, disabling WARP")
+        USE_WARP = False
+        WARP_PROXY = ""
+
 if not USE_WARP:
     import socket as _socket
     try:
         _s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-        _s.settimeout(1.0)
+        _s.settimeout(2.0)
         _s.connect(("127.0.0.1", 40000))
         _s.close()
         USE_WARP = True
+        WARP_PROXY = "socks5://127.0.0.1:40000"
         logger.info("✓ Cloudflare WARP auto-detected on localhost:40000")
     except (ConnectionRefusedError, _socket.timeout, OSError):
         pass

@@ -13,6 +13,15 @@ echo "Starting Cloudflare WARP proxy..."
 if command -v warp-cli &> /dev/null; then
     echo "  warp-cli found, setting up WARP..."
     
+    # Start the WARP daemon (warp-svc) in background if not running
+    if ! pgrep -x warp-svc > /dev/null 2>&1; then
+        echo "  Starting warp-svc daemon..."
+        warp-svc &
+        sleep 3  # Give daemon time to initialize
+    else
+        echo "  warp-svc already running"
+    fi
+    
     # Register WARP (first time only, non-interactive)
     warp-cli registration new 2>/dev/null || true
     sleep 1
@@ -23,17 +32,23 @@ if command -v warp-cli &> /dev/null; then
     
     # Connect to WARP
     warp-cli connect 2>/dev/null
-    sleep 2
+    sleep 3
     
-    # Wait up to 15 seconds for WARP to fully connect
+    # Wait up to 20 seconds for WARP to fully connect
     WARP_READY=false
-    for i in $(seq 1 15); do
+    for i in $(seq 1 20); do
         WARP_STATUS_OUTPUT=$(warp-cli status 2>&1)
         if echo "$WARP_STATUS_OUTPUT" | grep -qi "connected"; then
             WARP_READY=true
             break
         fi
-        echo "  Waiting for WARP... ($i/15)"
+        # Check if SOCKS5 port is listening
+        if command -v ss > /dev/null && ss -tlnp | grep -q ":40000"; then
+            WARP_READY=true
+            echo "  WARP proxy port 40000 is listening"
+            break
+        fi
+        echo "  Waiting for WARP... ($i/20)"
         sleep 1
     done
     
@@ -42,10 +57,10 @@ if command -v warp-cli &> /dev/null; then
         export USE_WARP=true
         export WARP_PROXY=socks5://127.0.0.1:40000
     else
-        echo "⚠ WARP status unclear (may still be connecting), attempting anyway..."
+        echo "⚠ WARP failed to connect, falling back to direct connection"
         echo "  Last status: $WARP_STATUS_OUTPUT"
-        export USE_WARP=true
-        export WARP_PROXY=socks5://127.0.0.1:40000
+        export USE_WARP=false
+        export WARP_PROXY=""
     fi
 else
     echo "⚠ warp-cli not found, WARP proxy disabled"
@@ -53,8 +68,8 @@ else
     export WARP_PROXY=""
 fi
 
-# Extra wait for WARP proxy to be fully ready
-sleep 3
+# Wait for WARP to be ready
+sleep 2
 
 # ── Step 2: Start PO Token server in background ──
 echo "Starting PO Token server on port 4416..."
