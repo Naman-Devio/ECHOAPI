@@ -115,9 +115,7 @@ async def get_music_info(
     try:
         url = f"https://youtu.be/{video_id}"
         
-        from po_token_helper import check_server as pot_check, get_po_token_extractor_args
-        pot_args = get_po_token_extractor_args("web", video_id) if pot_check() else {}
-        
+        from po_token_helper import POT_SERVER_URL, check_server as pot_check
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
@@ -126,8 +124,10 @@ async def get_music_info(
             'socket_timeout': 30,
             'retries': 5,
         }
-        if pot_args:
-            ydl_opts["extractor_args"] = pot_args
+        if pot_check():
+            ydl_opts["extractor_args"] = {
+                "youtubepot-bgutilhttp": {"base_url": [POT_SERVER_URL]}
+            }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -163,7 +163,7 @@ async def get_music_info(
             
     except Exception as e:
         logger.error(f"Info extraction error: {e}")
-        raise HTTPException(status_code=404, detail=f"Video not found: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Info extraction failed: {str(e)}")
 
 @musicbot_router.get("/stream/{video_id}")
 async def get_stream_url(
@@ -182,9 +182,7 @@ async def get_stream_url(
     try:
         url = f"https://youtu.be/{video_id}"
         
-        from po_token_helper import check_server as pot_check, get_po_token_extractor_args
-        pot_args = get_po_token_extractor_args("web", video_id) if pot_check() else {}
-        
+        from po_token_helper import POT_SERVER_URL, check_server as pot_check
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
@@ -194,8 +192,10 @@ async def get_stream_url(
             'socket_timeout': 30,
             'retries': 5,
         }
-        if pot_args:
-            ydl_opts["extractor_args"] = pot_args
+        if pot_check():
+            ydl_opts["extractor_args"] = {
+                "youtubepot-bgutilhttp": {"base_url": [POT_SERVER_URL]}
+            }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
