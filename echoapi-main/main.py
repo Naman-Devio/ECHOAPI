@@ -9,15 +9,20 @@ from functools import wraps
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
-# Load environment variables from .env file (override system env vars)
-# .env file always takes precedence over system environment variables
-load_dotenv(override=True)
+# Load environment variables from .env file (system/container env vars take precedence)
+load_dotenv(override=False)
 
 # ─── Add Deno to PATH for yt-dlp JavaScript runtime ──────────────────────────
 # This is required for yt-dlp to use Deno for signature decryption
-for deno_path in ["/usr/local/bin", os.path.expanduser("~/.deno/bin")]:
-    if os.path.exists(os.path.join(deno_path, "deno")) and deno_path not in os.environ["PATH"]:
-        os.environ["PATH"] += os.pathsep + deno_path
+for deno_path in [
+    "/usr/local/bin",
+    "/root/.deno/bin",
+    os.path.expanduser("~/.deno/bin"),
+    r"C:\ProgramData\chocolatey\bin",
+    os.path.join(os.environ.get("USERPROFILE", ""), ".deno", "bin"),
+]:
+    if (os.path.exists(os.path.join(deno_path, "deno")) or os.path.exists(os.path.join(deno_path, "deno.exe"))) and deno_path not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = deno_path + os.pathsep + os.environ.get("PATH", "")
         break
 
 import yt_dlp
@@ -59,39 +64,46 @@ logger = logging.getLogger(__name__)
 # ─── Proxy Manager Setup ──────────────────────────────────────────────────────
 # Proxy priority: WARP (free, trusted) > WebShare/ProxyScrap > Direct
 USE_WARP = os.getenv("USE_WARP", "false").lower() == "true"
-WARP_PROXY = os.getenv("WARP_PROXY", "socks5://127.0.0.1:40000")  # Cloudflare WARP
+WARP_PROXY = os.getenv("WARP_PROXY", "")  # Cloudflare WARP (local or remote)
 USE_PROXIES = os.getenv("USE_PROXIES", "false").lower() == "true"  # WebShare/ProxyScrap
 PROXY_TYPE = os.getenv("PROXY_TYPE", "any")  # any, http, socks4, socks5
 ENABLE_PROXY_CHECKER = os.getenv("ENABLE_PROXY_CHECKER", "true").lower() == "true"
 
 proxy_checker = None
 
-# Auto-detect WARP if available (verify port is actually listening)
-if USE_WARP:
+# Verify WARP is reachable (supports both local and remote)
+if USE_WARP and WARP_PROXY:
     import socket as _socket
+    from urllib.parse import urlparse
     try:
+        parsed = urlparse(WARP_PROXY)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 40000
         _s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-        _s.settimeout(2.0)
-        _s.connect(("127.0.0.1", 40000))
+        _s.settimeout(3.0)
+        _s.connect((host, port))
         _s.close()
-        logger.info("✓ Cloudflare WARP verified on localhost:40000")
-    except (ConnectionRefusedError, _socket.timeout, OSError):
-        logger.warning("⚠ WARP port 40000 not reachable, disabling WARP")
+        logger.info(f"✓ Cloudflare WARP verified at {host}:{port}")
+    except (ConnectionRefusedError, _socket.timeout, OSError) as e:
+        logger.warning(f"⚠ WARP not reachable at {host}:{port}: {e}")
         USE_WARP = False
         WARP_PROXY = ""
 
+# Auto-detect local WARP if not configured
 if not USE_WARP:
     import socket as _socket
-    try:
-        _s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-        _s.settimeout(2.0)
-        _s.connect(("127.0.0.1", 40000))
-        _s.close()
-        USE_WARP = True
-        WARP_PROXY = "socks5://127.0.0.1:40000"
-        logger.info("✓ Cloudflare WARP auto-detected on localhost:40000")
-    except (ConnectionRefusedError, _socket.timeout, OSError):
-        pass
+    for _warp_port in [40000]:
+        try:
+            _s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+            _s.settimeout(2.0)
+            _s.connect(("127.0.0.1", _warp_port))
+            _s.close()
+            USE_WARP = True
+            WARP_PROXY = f"socks5://127.0.0.1:{_warp_port}"
+            logger.info(f"✓ Cloudflare WARP auto-detected on localhost:{_warp_port}")
+            break
+        except (ConnectionRefusedError, _socket.timeout, OSError):
+            continue
 
 if USE_WARP:
     logger.info(f"✓ Cloudflare WARP proxy: {WARP_PROXY}")
@@ -384,14 +396,13 @@ POT_AVAILABLE = _check_pot_provider()
 
 if POT_AVAILABLE:
     logger.info(f"✓ PO Token provider available at {POT_PROVIDER_URL}")
-    # Use web + mweb clients (need PO tokens but return adaptive formats)
-    YDL_BASE_OPTS["extractor_args"]["youtube"]["player_client"] = ["web", "mweb"]
-    # Add PO token provider URL if non-default
+    # Note: Do not restrict player_client to mweb as mweb activates SABR-only streaming.
+    # yt-dlp's default player clients combined with bgutil:http provider deliver full adaptive formats.
     if POT_PROVIDER_URL != "http://127.0.0.1:4416":
         YDL_BASE_OPTS["extractor_args"]["youtubepot-bgutilhttp"] = {
-            "base_url": POT_PROVIDER_URL
+            "base_url": [POT_PROVIDER_URL]
         }
-    logger.info(f"✓ YouTube player clients: web, mweb (adaptive formats enabled)")
+    logger.info(f"✓ PO Token provider configured (adaptive formats enabled)")
 else:
     logger.warning(f"⚠ PO Token provider not reachable at {POT_PROVIDER_URL}")
     logger.warning(f"  Only combined formats available (itag=18). Start PO token provider:")
@@ -533,22 +544,14 @@ def _run_ytdlp(url: str, extra_opts: dict = {}) -> dict:
             opts["proxy"] = proxy
             logger.debug(f"Using proxy: {proxy}")
         
-        # Add PO token + use mweb client (recommended by yt-dlp wiki)
-        if pot_available:
-            from inntertube import extract_video_id
-            vid = extract_video_id(url)
-            if vid:
-                # mweb + PO token = adaptive formats (audio-only, video-only)
-                # Do NOT skip webpage - it's needed for full format listing
-                pot_args = get_po_token_extractor_args("mweb", vid)
-                if pot_args:
-                    if "extractor_args" not in opts:
-                        opts["extractor_args"] = {}
-                    opts["extractor_args"]["youtube"] = {
-                        "player_client": ["mweb"],
-                        "po_token": pot_args["youtube"]["po_token"],
-                    }
-                    logger.info(f"Added mweb + PO token for video {vid}")
+        # Ensure PO token provider configuration is present
+        if pot_available and POT_PROVIDER_URL != "http://127.0.0.1:4416":
+            if "extractor_args" not in opts:
+                opts["extractor_args"] = {}
+            if "youtubepot-bgutilhttp" not in opts["extractor_args"]:
+                opts["extractor_args"]["youtubepot-bgutilhttp"] = {
+                    "base_url": [POT_PROVIDER_URL]
+                }
         
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -579,6 +582,8 @@ def _run_ytdlp(url: str, extra_opts: dict = {}) -> dict:
             try:
                 opts_direct = {**YDL_BASE_OPTS, **extra_opts}
                 opts_direct.pop("proxy", None)
+                if "extractor_args" in opts:
+                    opts_direct["extractor_args"] = opts["extractor_args"]
                 with yt_dlp.YoutubeDL(opts_direct) as ydl:
                     info = ydl.extract_info(url, download=False)
                     result = ydl.sanitize_info(info)
@@ -703,13 +708,17 @@ def pick_best_audio_url(info: dict, quality: str = "best") -> dict:
         and f.get("url")
     ]
     
-    if audio_formats:
-        audio_formats.sort(key=lambda f: f.get("abr") or 0, reverse=(quality == "best"))
-        chosen = audio_formats[0]
+    # Prioritize direct progressive HTTPS formats (e.g., m4a, webm) over HLS manifests
+    direct_https = [f for f in audio_formats if f.get("protocol") == "https"]
+    candidates = direct_https if direct_https else audio_formats
+    
+    if candidates:
+        candidates.sort(key=lambda f: f.get("abr") or f.get("tbr") or 0, reverse=(quality == "best"))
+        chosen = candidates[0]
         return {
             "url": chosen["url"],
             "ext": chosen.get("ext", "webm"),
-            "abr": chosen.get("abr"),
+            "abr": chosen.get("abr") or chosen.get("tbr"),
             "filesize": chosen.get("filesize"),
             "is_audio_only": True,
         }

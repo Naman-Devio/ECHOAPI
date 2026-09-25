@@ -18,8 +18,11 @@ security = HTTPBearer(auto_error=False)
 class APIKeyManager:
     """Manages API keys with rate limiting and usage tracking"""
     
-    def __init__(self, keys_file: str = "api_keys.json"):
-        self.keys_file = Path(keys_file)
+    def __init__(self, keys_file: Optional[str] = None):
+        if keys_file:
+            self.keys_file = Path(keys_file)
+        else:
+            self.keys_file = Path(__file__).parent / "api_keys.json"
         self.api_keys = self._load_keys()
         
         # Create default keys if none exist

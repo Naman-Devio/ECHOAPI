@@ -1,21 +1,13 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# EchoTube API — Production Dockerfile (API + PO Token Server + WARP Proxy)
+# EchoTube API — Production Dockerfile (API + PO Token Server + Remote WARP)
 # ══════════════════════════════════════════════════════════════════════════════
+# WARP runs on the VPS (13.204.45.5:40000) — Render connects remotely
 
 FROM python:3.12-slim AS base
 
 # System deps + Node.js + Deno
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ffmpeg gcc g++ unzip git gnupg lsb-release apt-transport-https && \
-    rm -rf /var/lib/apt/lists/*
-
-# ── Install Cloudflare WARP CLI ──
-# WARP provides a free, trusted proxy that YouTube doesn't block
-RUN mkdir -p --mode=0755 /usr/share/keyrings && \
-    curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/cloudflare-client.list > /dev/null && \
-    apt-get update && \
-    apt-get install -y cloudflare-warp && \
+    curl ffmpeg gcc g++ unzip git && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Node.js (for PO token server)
@@ -35,11 +27,13 @@ RUN pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir 'yt-dlp==2026.8.19' && \
     python -c "import yt_dlp; print(f'yt-dlp {yt_dlp.version.__version__}')"
 
-# Install PO token server
-RUN git clone --single-branch --branch 1.3.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil && \
+# Install PO token server and yt-dlp plugin
+RUN git clone --depth 1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil && \
     cd /opt/bgutil/server && \
     npm ci && \
     npx tsc && \
+    cp /opt/bgutil/README.md /opt/bgutil/plugin/README.md && \
+    pip install --no-cache-dir /opt/bgutil/plugin && \
     rm -rf /opt/bgutil/.git
 
 # Copy source

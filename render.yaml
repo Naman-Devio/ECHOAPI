@@ -17,10 +17,13 @@ services:
     envVars:
       - key: PORT
         value: 8000
+      # Co-located BotGuard PO Token Provider
+      - key: POT_PROVIDER_URL
+        value: "http://127.0.0.1:4416"
+      - key: POT_SERVER_URL
+        value: "http://127.0.0.1:4416"
       - key: USE_WARP
-        value: "true"
-      - key: WARP_PROXY
-        value: "socks5://127.0.0.1:40000"
+        value: "false"
       - key: USE_PROXIES
         value: "false"
       - key: ENABLE_PROXY_CHECKER

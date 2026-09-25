@@ -34,14 +34,40 @@ async def search_music(
     
     Perfect for music bots to find songs!
     """
-    
+    # ── Try ultra-fast InnerTube search first (no bot detection, ~300ms) ──
+    try:
+        from inntertube import search_youtube_fast
+        fast_results = await search_youtube_fast(q, max_results=limit)
+        if fast_results:
+            results = []
+            for entry in fast_results:
+                results.append({
+                    "id": entry.get('id'),
+                    "title": entry.get('title'),
+                    "duration": entry.get('duration'),
+                    "duration_string": entry.get('duration_string'),
+                    "thumbnail": entry.get('thumbnail'),
+                    "channel": entry.get('uploader'),
+                    "url": entry.get('url') or f"https://youtu.be/{entry.get('id')}",
+                    "view_count": entry.get('view_count'),
+                })
+            return {
+                "success": True,
+                "query": q,
+                "results": results,
+                "total": len(results)
+            }
+    except Exception as e:
+        logger.warning(f"Fast InnerTube search failed, falling back to yt-dlp: {e}")
+
+    # ── Fallback to yt-dlp search ──
     try:
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
             'extract_flat': True,
             'skip_download': True,
-            'nocheckcertificate': True,  # Bypass SSL verification
+            'nocheckcertificate': True,
             'socket_timeout': 30,
             'retries': 5,
         }
@@ -86,7 +112,6 @@ async def get_music_info(
     
     Returns: title, duration, thumbnail, formats, etc.
     """
-    
     try:
         url = f"https://youtu.be/{video_id}"
         
@@ -94,7 +119,7 @@ async def get_music_info(
             'quiet': True,
             'no_warnings': True,
             'skip_download': True,
-            'nocheckcertificate': True,  # Bypass SSL verification
+            'nocheckcertificate': True,
             'socket_timeout': 30,
             'retries': 5,
         }
@@ -105,12 +130,14 @@ async def get_music_info(
             # Extract audio formats
             audio_formats = []
             for fmt in info.get('formats', []):
-                if fmt.get('acodec') != 'none' and fmt.get('vcodec') == 'none':
+                if fmt.get('acodec') not in (None, 'none', '') and fmt.get('vcodec') in (None, 'none', ''):
+                    abr = fmt.get('abr') or fmt.get('tbr') or 'unknown'
                     audio_formats.append({
                         "format_id": fmt.get('format_id'),
-                        "quality": fmt.get('abr', 'unknown'),
+                        "quality": f"{abr}kbps" if isinstance(abr, (int, float)) else str(abr),
                         "ext": fmt.get('ext'),
                         "filesize": fmt.get('filesize'),
+                        "protocol": fmt.get('protocol'),
                     })
             
             return {
@@ -121,11 +148,11 @@ async def get_music_info(
                 "duration": info.get('duration'),
                 "duration_string": info.get('duration_string'),
                 "thumbnail": info.get('thumbnail'),
-                "description": info.get('description', '')[:500],  # First 500 chars
+                "description": info.get('description', '')[:500],
                 "view_count": info.get('view_count'),
                 "like_count": info.get('like_count'),
                 "upload_date": info.get('upload_date'),
-                "audio_formats": audio_formats[:5],  # Top 5 audio formats
+                "audio_formats": audio_formats[:10],
                 "url": f"https://youtu.be/{info.get('id')}"
             }
             
@@ -147,7 +174,6 @@ async def get_stream_url(
     Perfect for streaming audio in Discord/Telegram bots!
     Returns a direct URL that expires in ~6 hours.
     """
-    
     try:
         url = f"https://youtu.be/{video_id}"
         
@@ -156,7 +182,7 @@ async def get_stream_url(
             'no_warnings': True,
             'skip_download': True,
             'format': 'bestaudio/best',
-            'nocheckcertificate': True,  # Bypass SSL verification
+            'nocheckcertificate': True,
             'socket_timeout': 30,
             'retries': 5,
         }
@@ -164,40 +190,50 @@ async def get_stream_url(
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             
-            # Find best audio stream
+            formats = info.get('formats', [])
+            
+            # Find streams with audio and a valid URL
             audio_streams = [
-                f for f in info.get('formats', [])
-                if f.get('acodec') != 'none' and f.get('vcodec') == 'none'
+                f for f in formats
+                if f.get('acodec') not in (None, 'none', '') and f.get('vcodec') in (None, 'none', '') and f.get('url')
             ]
             
-            if not audio_streams:
-                # Fallback to combined streams
-                audio_streams = [
-                    f for f in info.get('formats', [])
-                    if f.get('acodec') != 'none'
+            # Prioritize progressive direct HTTPS streams (m4a, webm) over HLS m3u8_native
+            direct_https = [f for f in audio_streams if f.get('protocol') == 'https']
+            candidates = direct_https if direct_https else audio_streams
+            
+            if not candidates:
+                # Fallback to combined streams with audio
+                candidates = [
+                    f for f in formats
+                    if f.get('acodec') not in (None, 'none', '') and f.get('url')
                 ]
             
-            if not audio_streams:
+            if not candidates:
                 raise HTTPException(status_code=404, detail="No audio streams available")
             
-            # Filter out streams with None abr, then sort by quality
-            audio_streams = [f for f in audio_streams if f.get('abr') is not None]
-            if not audio_streams:
-                raise HTTPException(status_code=404, detail="No audio streams with bitrate info available")
-            
-            audio_streams.sort(key=lambda x: x.get('abr') or 0, reverse=True)
+            def _get_bitrate(f):
+                return f.get('abr') or f.get('tbr') or 0
+                
+            candidates.sort(key=_get_bitrate, reverse=True)
             
             # Select based on quality preference
-            quality_map = {"low": -1, "medium": len(audio_streams) // 2, "high": 0}
-            index = quality_map.get(quality, 0)
-            best_stream = audio_streams[index]
+            if quality == "low":
+                best_stream = candidates[-1]
+            elif quality == "high":
+                best_stream = candidates[0]
+            else:  # medium
+                best_stream = candidates[len(candidates) // 2]
+            
+            abr = best_stream.get('abr') or best_stream.get('tbr') or 'unknown'
             
             return {
                 "success": True,
                 "title": info.get('title'),
                 "stream_url": best_stream.get('url'),
-                "quality": f"{best_stream.get('abr', 'unknown')}kbps",
+                "quality": f"{abr}kbps" if isinstance(abr, (int, float)) else str(abr),
                 "format": best_stream.get('ext'),
+                "protocol": best_stream.get('protocol'),
                 "duration": info.get('duration'),
                 "duration_string": info.get('duration_string'),
                 "expires_in": "~6 hours",

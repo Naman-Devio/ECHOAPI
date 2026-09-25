@@ -11,7 +11,7 @@ python-dotenv==1.0.1
 # ── YouTube Extraction ───────────────────────────────────────────────────────
 yt-dlp==2026.8.19
 httpx[http2]==0.27.2
-bgutil-ytdlp-pot-provider
+bgutil-ytdlp-pot-provider>=2.0.0
 
 # ── Caching ──────────────────────────────────────────────────────────────────
 redis==5.1.1
