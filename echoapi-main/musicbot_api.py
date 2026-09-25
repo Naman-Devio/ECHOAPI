@@ -123,11 +123,14 @@ async def get_music_info(
             'nocheckcertificate': True,
             'socket_timeout': 30,
             'retries': 5,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['ios', 'android', 'mweb']
+                }
+            }
         }
         if pot_check():
-            ydl_opts["extractor_args"] = {
-                "youtubepot-bgutilhttp": {"base_url": [POT_SERVER_URL]}
-            }
+            ydl_opts["extractor_args"]["youtubepot-bgutilhttp"] = {"base_url": [POT_SERVER_URL]}
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -191,11 +194,14 @@ async def get_stream_url(
             'nocheckcertificate': True,
             'socket_timeout': 30,
             'retries': 5,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['ios', 'android', 'mweb']
+                }
+            }
         }
         if pot_check():
-            ydl_opts["extractor_args"] = {
-                "youtubepot-bgutilhttp": {"base_url": [POT_SERVER_URL]}
-            }
+            ydl_opts["extractor_args"]["youtubepot-bgutilhttp"] = {"base_url": [POT_SERVER_URL]}
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)

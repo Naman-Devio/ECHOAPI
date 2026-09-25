@@ -338,7 +338,7 @@ YDL_BASE_OPTS = {
     # Without PO tokens: 'tv_embedded' only returns combined itag=18
     "extractor_args": {
         "youtube": {
-            # Do NOT use player_skip - it prevents full format listing
+            "player_client": ["ios", "android", "mweb"]
         }
     },
 
