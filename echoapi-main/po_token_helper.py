@@ -113,9 +113,9 @@ _server_checked = False
 _server_available = False
 
 def check_server() -> bool:
-    """Check and cache server availability."""
+    """Check and cache server availability (re-checks if previously unavailable)."""
     global _server_checked, _server_available
-    if not _server_checked:
+    if not _server_checked or not _server_available:
         _server_available = _is_server_available()
         _server_checked = True
         if _server_available:
