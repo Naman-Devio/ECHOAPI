@@ -11,7 +11,7 @@ echo "════════════════════════�
 # ── Step 1: Start PO Token server in background ──
 echo "[1/2] Starting PO Token Server (port 4416)..."
 cd /opt/bgutil/server
-node build/main.js --port 4416 --host 0.0.0.0 &
+node build/main.js --port 4416 --host 0.0.0.0 > /tmp/pot_server.log 2>&1 &
 POT_PID=$!
 echo "PO Token server PID: $POT_PID"
 
@@ -28,7 +28,8 @@ for i in {1..15}; do
 done
 
 if [ "$READY" = false ]; then
-    echo "⚠ Warning: PO Token server did not respond within 15 seconds"
+    echo "⚠ Warning: PO Token server did not respond within 15 seconds. Log output:"
+    cat /tmp/pot_server.log || true
 fi
 
 # ── Step 2: Start API server ──
