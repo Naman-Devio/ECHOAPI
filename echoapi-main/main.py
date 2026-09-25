@@ -398,10 +398,9 @@ if POT_AVAILABLE:
     logger.info(f"✓ PO Token provider available at {POT_PROVIDER_URL}")
     # Note: Do not restrict player_client to mweb as mweb activates SABR-only streaming.
     # yt-dlp's default player clients combined with bgutil:http provider deliver full adaptive formats.
-    if POT_PROVIDER_URL != "http://127.0.0.1:4416":
-        YDL_BASE_OPTS["extractor_args"]["youtubepot-bgutilhttp"] = {
-            "base_url": [POT_PROVIDER_URL]
-        }
+    YDL_BASE_OPTS["extractor_args"]["youtubepot-bgutilhttp"] = {
+        "base_url": [POT_PROVIDER_URL]
+    }
     logger.info(f"✓ PO Token provider configured (adaptive formats enabled)")
 else:
     logger.warning(f"⚠ PO Token provider not reachable at {POT_PROVIDER_URL}")
