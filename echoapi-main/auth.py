@@ -49,23 +49,37 @@ class APIKeyManager:
     
     def _create_default_keys(self):
         """Create default API keys for testing"""
-        # Free tier key
-        free_key = self.generate_api_key(
-            name="Free Tier",
-            description="Default free API key for testing",
-            rate_limit=100,
-            tier="free"
-        )
+        free_key = "ytdl_GDk1AX3a-bGYdPCLJJFzz6UhhQ-DF1HCT3LvmxpJx4g"
+        unlimited_key = "ytdl_clXaiUsf8CQAnXhHvBdS9YRX9vEHndLLFPSraSOFcM8"
+
+        self.api_keys[free_key] = {
+            "name": "Free Tier",
+            "description": "Default free API key for testing",
+            "tier": "free",
+            "created_at": datetime.now().isoformat(),
+            "rate_limit": 100,
+            "requests_today": 0,
+            "total_requests": 0,
+            "last_used": None,
+            "last_reset": datetime.now().date().isoformat(),
+            "active": True
+        }
+
+        self.api_keys[unlimited_key] = {
+            "name": "Unlimited",
+            "description": "Unlimited access key",
+            "tier": "unlimited",
+            "created_at": datetime.now().isoformat(),
+            "rate_limit": 999999,
+            "requests_today": 0,
+            "total_requests": 0,
+            "last_used": None,
+            "last_reset": datetime.now().date().isoformat(),
+            "active": True
+        }
         
-        # Unlimited key
-        unlimited_key = self.generate_api_key(
-            name="Unlimited",
-            description="Unlimited access key",
-            rate_limit=999999,
-            tier="unlimited"
-        )
-        
-        logger.info(f"Created default API keys:")
+        self._save_keys()
+        logger.info("Created default API keys:")
         logger.info(f"  FREE: {free_key}")
         logger.info(f"  UNLIMITED: {unlimited_key}")
     
