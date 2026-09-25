@@ -115,6 +115,9 @@ async def get_music_info(
     try:
         url = f"https://youtu.be/{video_id}"
         
+        from po_token_helper import check_server as pot_check, get_po_token_extractor_args
+        pot_args = get_po_token_extractor_args("web", video_id) if pot_check() else {}
+        
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
@@ -123,6 +126,8 @@ async def get_music_info(
             'socket_timeout': 30,
             'retries': 5,
         }
+        if pot_args:
+            ydl_opts["extractor_args"] = pot_args
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -177,6 +182,9 @@ async def get_stream_url(
     try:
         url = f"https://youtu.be/{video_id}"
         
+        from po_token_helper import check_server as pot_check, get_po_token_extractor_args
+        pot_args = get_po_token_extractor_args("web", video_id) if pot_check() else {}
+        
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
@@ -186,6 +194,8 @@ async def get_stream_url(
             'socket_timeout': 30,
             'retries': 5,
         }
+        if pot_args:
+            ydl_opts["extractor_args"] = pot_args
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
