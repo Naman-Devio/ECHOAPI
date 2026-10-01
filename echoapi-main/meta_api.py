@@ -47,7 +47,7 @@ async def get_meta_info(
                 "duration_string": cached_item["duration_string"],
                 "thumbnail": cached_item["thumbnail"],
                 "url": f"https://youtu.be/{cached_item['id']}",
-                "stream_url": f"/api/musicbot/stream/{cached_item['id']}",
+                "stream_url": f"/api/musicbot/play/{cached_item['id']}",
                 "provider": "EchoAPI"
             }
         }
@@ -69,7 +69,7 @@ async def get_meta_info(
                     "duration_string": parsed.get("duration_string"),
                     "thumbnail": parsed.get("thumbnail"),
                     "url": f"https://youtu.be/{parsed.get('id')}",
-                    "stream_url": f"/api/musicbot/stream/{parsed.get('id')}",
+                    "stream_url": f"/api/musicbot/play/{parsed.get('id')}",
                     "provider": "EchoAPI"
                 }
             }
@@ -98,7 +98,7 @@ async def get_meta_info(
                     "duration_string": info.get("duration_string"),
                     "thumbnail": info.get("thumbnail"),
                     "url": f"https://youtu.be/{info.get('id')}",
-                    "stream_url": f"/api/musicbot/stream/{info.get('id')}",
+                    "stream_url": f"/api/musicbot/play/{info.get('id')}",
                     "provider": "EchoAPI"
                 }
             }

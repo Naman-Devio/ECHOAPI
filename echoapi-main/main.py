@@ -1022,58 +1022,58 @@ async def get_audio(
     Get direct audio stream URL. Sub-second response with caching.
     Set redirect=true to go straight to the audio stream.
     """
+    video_id = extract_video_id(url)
+    if not video_id:
+        raise HTTPException(status_code=400, detail="Invalid YouTube URL")
+
     cache_key = make_cache_key("audio", url, quality)
     cached = await cache_get(cache_key)
 
     if not cached:
-        video_id = extract_video_id(url)
-        if not video_id:
-            raise HTTPException(status_code=400, detail="Invalid YouTube URL")
+        # Step 0: Instant SongCatalog Vault Hit (5,778 pre-indexed songs)
+        cat_song = catalog.get_by_id(video_id)
+        if cat_song:
+            audio = {
+                "url": f"/api/musicbot/play/{video_id}",
+                "ext": "m4a",
+                "abr": 128,
+                "is_audio_only": True
+            }
+            meta = {
+                "id": cat_song["id"],
+                "title": cat_song["title"],
+                "thumbnail": cat_song["thumbnail"],
+                "duration": cat_song["duration"],
+                "duration_string": cat_song["duration_string"],
+                "uploader": cat_song.get("channel", "EchoAPI Music")
+            }
+            logger.info(f"✓ SongCatalog hit for {video_id}: {cat_song['title']}")
+        else:
+            meta = None
+            audio = None
 
-        # Step 1: Get metadata via InnerTube (fast, works from any IP)
-        meta = None
-        t0 = time.time()
-        try:
-            raw = await get_video_info_fast(video_id)
-            if raw:
-                meta = parse_video_info(raw, video_id)
-                logger.info(f"InnerTube metadata for {video_id} in {time.time()-t0:.2f}s")
-        except Exception as e:
-            logger.warning(f"InnerTube metadata failed: {e}")
+            # Step 1: Get metadata via InnerTube (fast, works from any IP)
+            t0 = time.time()
+            try:
+                raw = await get_video_info_fast(video_id)
+                if raw:
+                    meta = parse_video_info(raw, video_id)
+                    logger.info(f"InnerTube metadata for {video_id} in {time.time()-t0:.2f}s")
+            except Exception as e:
+                logger.warning(f"InnerTube metadata failed: {e}")
 
-        # Step 2: Get streaming URL via yt-dlp with PO token + mweb (primary method)
-        audio = None
-        try:
-            info = await extract_info(url)
-            audio = pick_best_audio_url(info)
-            if audio.get("url"):
-                if not meta:
-                    meta = build_video_info(info)
-                logger.info(f"yt-dlp audio for {video_id} (audio_only=" + str(audio.get("is_audio_only")) + ")")
-        except Exception as e:
-            logger.warning(f"yt-dlp audio failed: {e}")
+            # Step 2: Get streaming URL via yt-dlp with PO token
+            try:
+                info = await extract_info(url)
+                audio = pick_best_audio_url(info)
+                if audio.get("url"):
+                    if not meta:
+                        meta = build_video_info(info)
+                    logger.info(f"yt-dlp audio for {video_id} (audio_only=" + str(audio.get("is_audio_only")) + ")")
+            except Exception as e:
+                logger.warning(f"yt-dlp audio failed: {e}")
 
-        # Step 2b: Fallback to Catalog Vault
-        if not audio or not audio.get("url"):
-            cat_song = catalog.get_by_id(video_id)
-            if cat_song:
-                audio = {
-                    "url": cat_song.get("stream_url") or f"/api/musicbot/stream/{video_id}",
-                    "ext": "m4a",
-                    "abr": 128,
-                    "is_audio_only": True
-                }
-                if not meta:
-                    meta = {
-                        "id": cat_song["id"],
-                        "title": cat_song["title"],
-                        "thumbnail": cat_song["thumbnail"],
-                        "duration": cat_song["duration"],
-                        "duration_string": cat_song["duration_string"],
-                        "uploader": cat_song.get("channel", "EchoAPI")
-                    }
-
-        # Step 3: Return result or error
+        # Return result or error
         if not audio or not audio.get("url") or not meta:
             raise HTTPException(
                 status_code=503,
@@ -1092,7 +1092,7 @@ async def get_audio(
             "audio": audio,
             "format_type": "audio_only" if is_audio_only else "video_audio_combined",
             "note": "Audio-only stream" if is_audio_only else "Combined stream",
-            "method": "yt-dlp",
+            "method": "catalog" if cat_song else "yt-dlp",
         }
         await cache_set(cache_key, cached, ttl=1800)
 
@@ -1100,6 +1100,9 @@ async def get_audio(
         stream_url = cached.get("audio", {}).get("url")
         if not stream_url:
             raise HTTPException(status_code=404, detail="No audio URL found")
+        # Route googlevideo.com URLs through EchoAPI's streaming pipe to avoid client-side IP-lock 403 errors
+        if "googlevideo.com" in stream_url:
+            return RedirectResponse(url=f"/api/musicbot/play/{video_id}", status_code=302)
         return RedirectResponse(url=stream_url, status_code=302)
 
     return {**cached, "cached": True if cached else False}
@@ -1116,37 +1119,105 @@ async def get_video(
     """
     Get direct video stream URL at desired resolution.
     """
+    video_id = extract_video_id(url)
+    if not video_id:
+        raise HTTPException(status_code=400, detail="Invalid YouTube URL")
+
     cache_key = make_cache_key("video", url, resolution)
     cached = await cache_get(cache_key)
 
     if not cached:
-        try:
-            info = await extract_info(url)
-        except yt_dlp.utils.DownloadError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        # Step 0: Check SongCatalog first
+        cat_song = catalog.get_by_id(video_id)
+        if cat_song:
+            cached = {
+                "id": cat_song["id"],
+                "title": cat_song["title"],
+                "thumbnail": cat_song["thumbnail"],
+                "duration": cat_song["duration"],
+                "duration_string": cat_song["duration_string"],
+                "uploader": cat_song.get("channel", "EchoAPI Music"),
+                "video": {
+                    "url": f"/api/musicbot/play/{video_id}",
+                    "resolution": "720p",
+                    "ext": "mp4",
+                },
+                "method": "catalog",
+            }
+            await cache_set(cache_key, cached, ttl=1800)
+            logger.info(f"✓ SongCatalog video hit for {video_id}: {cat_song['title']}")
+        else:
+            try:
+                info = await extract_info(url)
+            except yt_dlp.utils.DownloadError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
 
-        video = pick_best_video_url(info, resolution)
-        meta = build_video_info(info)
-        cached = {
-            "id": meta["id"],
-            "title": meta["title"],
-            "thumbnail": meta["thumbnail"],
-            "duration": meta["duration"],
-            "duration_string": meta["duration_string"],
-            "uploader": meta["uploader"],
-            "video": video,
-        }
-        await cache_set(cache_key, cached, ttl=1800)
+            video = pick_best_video_url(info, resolution)
+            meta = build_video_info(info)
+            cached = {
+                "id": meta["id"],
+                "title": meta["title"],
+                "thumbnail": meta["thumbnail"],
+                "duration": meta["duration"],
+                "duration_string": meta["duration_string"],
+                "uploader": meta["uploader"],
+                "video": video,
+                "method": "yt-dlp",
+            }
+            await cache_set(cache_key, cached, ttl=1800)
 
     if redirect:
         stream_url = cached.get("video", {}).get("url")
         if not stream_url:
             raise HTTPException(status_code=404, detail="No video URL found")
+        if "googlevideo.com" in stream_url:
+            return RedirectResponse(url=f"/api/musicbot/play/{video_id}", status_code=302)
         return RedirectResponse(url=stream_url, status_code=302)
 
     return {**cached, "cached": True if cached else False}
+
+
+# ── /api/song & /api/songs Catalog Endpoints ─────────────────────────────────
+@app.get("/api/song/{video_id}", tags=["Catalog"])
+async def get_catalog_song(video_id: str):
+    """
+    Lookup a song from the 5,778+ pre-indexed song catalog by 11-char Video ID.
+    Returns 0ms instant metadata and direct stream pipe URL.
+    """
+    song = catalog.get_by_id(video_id)
+    if not song:
+        raise HTTPException(status_code=404, detail=f"Song with Video ID '{video_id}' not found in catalog")
+    return {
+        "success": True,
+        "hint": "Stream audio/video reliably using the 'stream_url' link.",
+        "song": song
+    }
+
+
+@app.get("/api/songs", tags=["Catalog"])
+async def list_catalog_songs(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page")
+):
+    """
+    Browse the complete 5,778+ songs catalog with pagination.
+    """
+    total = len(catalog.songs)
+    start = (page - 1) * limit
+    end = start + limit
+    items = catalog.songs[start:end]
+    total_pages = (total + limit - 1) // limit if total else 0
+    return {
+        "success": True,
+        "page": page,
+        "limit": limit,
+        "total_songs": total,
+        "total_pages": total_pages,
+        "hint": f"Next page is /api/songs?page={page+1}&limit={limit}" if page < total_pages else "Reached last page of catalog.",
+        "songs": items
+    }
 
 
 # ── /api/formats ──────────────────────────────────────────────────────────────

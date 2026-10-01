@@ -12,7 +12,12 @@ from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-DATA_PATH = os.path.join(os.path.dirname(__file__), "data", "songs.json")
+POSSIBLE_DATA_PATHS = [
+    os.path.join(os.path.dirname(__file__), "data", "songs.json"),
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "songs.json"),
+    os.path.join(os.getcwd(), "data", "songs.json"),
+    os.path.join(os.getcwd(), "echoapi-main", "data", "songs.json"),
+]
 
 class SongCatalog:
     _instance = None
@@ -33,12 +38,18 @@ class SongCatalog:
 
     def load_catalog(self):
         """Load songs.json into RAM and build fast ID index."""
-        if not os.path.exists(DATA_PATH):
-            logger.warning(f"⚠ Catalog data file not found at {DATA_PATH}")
+        target_path = None
+        for p in POSSIBLE_DATA_PATHS:
+            if os.path.exists(p):
+                target_path = p
+                break
+
+        if not target_path:
+            logger.warning("⚠ Catalog data file (songs.json) not found in any search path")
             return
         
         try:
-            with open(DATA_PATH, "r", encoding="utf-8") as f:
+            with open(target_path, "r", encoding="utf-8") as f:
                 raw_songs = json.load(f)
             
             for item in raw_songs:
@@ -48,10 +59,7 @@ class SongCatalog:
                     continue
                 
                 raw_stream = item.get("stream_url", "")
-                if not raw_stream or "catbox" in raw_stream or "yuki" in raw_stream:
-                    stream_url = f"/api/musicbot/stream/{vid_id}"
-                else:
-                    stream_url = raw_stream
+                cdn_url = raw_stream if raw_stream and raw_stream.startswith("http") else None
 
                 song_obj = {
                     "id": vid_id,
@@ -61,13 +69,14 @@ class SongCatalog:
                     "thumbnail": item.get("thumbnail") or f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg",
                     "channel": item.get("artist") or "EchoAPI Music",
                     "url": f"https://youtu.be/{vid_id}",
-                    "stream_url": stream_url,
+                    "stream_url": f"/api/musicbot/play/{vid_id}",
+                    "cdn_url": cdn_url,
                     "source": "EchoAPI"
                 }
                 self.songs.append(song_obj)
                 self.by_id[vid_id] = song_obj
 
-            logger.info(f"✓ SongCatalog loaded {len(self.songs)} pre-indexed songs into memory")
+            logger.info(f"✓ SongCatalog loaded {len(self.songs)} pre-indexed songs from {target_path}")
         except Exception as e:
             logger.error(f"Failed to load song catalog: {e}")
 
@@ -110,5 +119,9 @@ class SongCatalog:
     def get_by_id(self, video_id: str) -> Optional[Dict[str, Any]]:
         """Get pre-indexed song details and cached stream URL by 11-char video ID."""
         return self.by_id.get(video_id)
+
+    def has_id(self, video_id: str) -> bool:
+        """Check if video ID is present in the pre-indexed catalog."""
+        return video_id in self.by_id
 
 catalog = SongCatalog()
