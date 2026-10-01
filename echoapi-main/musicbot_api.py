@@ -34,31 +34,19 @@ async def search_music(
     
     Perfect for music bots to find songs!
     """
-    # ── Try ultra-fast InnerTube search first (no bot detection, ~300ms) ──
+    # ── 3-Way Async Race Search Engine ──
     try:
-        from inntertube import search_youtube_fast
-        fast_results = await search_youtube_fast(q, max_results=limit)
-        if fast_results:
-            results = []
-            for entry in fast_results:
-                results.append({
-                    "id": entry.get('id'),
-                    "title": entry.get('title'),
-                    "duration": entry.get('duration'),
-                    "duration_string": entry.get('duration_string'),
-                    "thumbnail": entry.get('thumbnail'),
-                    "channel": entry.get('uploader'),
-                    "url": entry.get('url') or f"https://youtu.be/{entry.get('id')}",
-                    "view_count": entry.get('view_count'),
-                })
-            return {
-                "success": True,
-                "query": q,
-                "results": results,
-                "total": len(results)
-            }
+        from search_engine import race_search
+        results = await race_search(q, limit=limit)
+        return {
+            "success": True,
+            "query": q,
+            "results": results,
+            "total": len(results)
+        }
     except Exception as e:
-        logger.warning(f"Fast InnerTube search failed, falling back to yt-dlp: {e}")
+        logger.error(f"Search engine error: {e}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
     # ── Fallback to yt-dlp search ──
     try:
@@ -257,7 +245,55 @@ async def get_stream_url(
             }
             
     except Exception as e:
-        logger.error(f"Stream URL error: {e}")
+        logger.warning(f"yt-dlp Stream URL extraction failed: {e}. Trying InnerTube & Catalog fallback...")
+        
+        # ── Fallback 1: Fast InnerTube direct stream extraction ──
+        try:
+            from inntertube import get_stream_urls_fast
+            fast_streams = await get_stream_urls_fast(video_id)
+            if fast_streams:
+                best_audio = None
+                for s in fast_streams:
+                    if s.get("acodec") != "none" and s.get("vcodec") in (None, "none", ""):
+                        best_audio = s
+                        break
+                if not best_audio and fast_streams:
+                    best_audio = fast_streams[0]
+                
+                if best_audio and best_audio.get("url"):
+                    return {
+                        "success": True,
+                        "title": f"YouTube Video ({video_id})",
+                        "stream_url": best_audio.get("url"),
+                        "quality": f"{best_audio.get('bitrate', 128)}kbps",
+                        "format": best_audio.get("ext", "m4a"),
+                        "protocol": "https",
+                        "duration": None,
+                        "source": "innertube_fallback",
+                        "expires_in": "~6 hours"
+                    }
+        except Exception as ie:
+            logger.warning(f"InnerTube stream fallback failed: {ie}")
+
+        # ── Fallback 2: Pre-cached Song Catalog Vault ──
+        try:
+            from song_catalog import catalog
+            cat_song = catalog.get_by_id(video_id)
+            if cat_song and cat_song.get("stream_url"):
+                return {
+                    "success": True,
+                    "title": cat_song.get("title"),
+                    "stream_url": cat_song.get("stream_url"),
+                    "quality": "high",
+                    "format": "mp4",
+                    "protocol": "https",
+                    "duration": cat_song.get("duration"),
+                    "source": "catalog_vault",
+                    "expires_in": "permanent"
+                }
+        except Exception as ce:
+            logger.warning(f"Catalog vault fallback failed: {ce}")
+
         raise HTTPException(status_code=500, detail=f"Stream URL generation failed: {str(e)}")
 
 @musicbot_router.get("/playlist/{playlist_id}")

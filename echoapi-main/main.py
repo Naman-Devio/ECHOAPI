@@ -53,6 +53,9 @@ from proxy_checker import ProxyChecker
 from auth import api_key_manager, verify_api_key, verify_api_key_optional
 from musicbot_api import musicbot_router
 from admin_api import admin_router
+from agent_specs import agent_router
+from keep_alive import start_keep_alive_task
+from song_catalog import catalog
 
 # ─── Logging Setup ────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -156,6 +159,17 @@ app = FastAPI(
 # Include routers
 app.include_router(musicbot_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
+app.include_router(agent_router)
+
+# ── Serverless / Vercel / Cloud Path Normalizer Middleware ──
+@app.middleware("http")
+async def path_normalizer_middleware(request: Request, call_next):
+    path = request.scope.get("path", "")
+    if path.startswith("/api/index.py"):
+        request.scope["path"] = path.replace("/api/index.py", "", 1) or "/"
+    elif path.startswith("/api/index"):
+        request.scope["path"] = path.replace("/api/index", "", 1) or "/"
+    return await call_next(request)
 
 # Add compression middleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
@@ -804,19 +818,47 @@ def build_video_info(info: dict) -> dict:
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
 
+@app.on_event("startup")
+async def startup_event():
+    logger.info("🚀 Starting EchoAPI engine & background services...")
+    asyncio.create_task(start_keep_alive_task())
+
 @app.get("/", tags=["Health"])
 async def root():
     return {
         "status": "running",
-        "api": "YT Download API v1.0",
-        "endpoints": ["/api/info", "/api/audio", "/api/video", "/api/search", "/api/formats"],
+        "api": "EchoAPI YouTube Music & Streaming Engine v2.0",
+        "endpoints": [
+            "/api/musicbot/search", "/api/musicbot/stream/{video_id}", "/api/musicbot/info/{video_id}",
+            "/api/search", "/api/audio", "/api/video", "/api/songs", "/llms.txt"
+        ],
         "docs": "/docs",
     }
 
 @app.get("/health", tags=["Health"])
+@app.get("/ping", tags=["Health"])
 async def health():
-    """Basic health check - for load balancers"""
-    return {"status": "ok"}
+    """Basic health & ping check - for anti-sleep and load balancers"""
+    return {"status": "ok", "ts": int(time.time())}
+
+@app.get("/api/songs", tags=["Catalog"])
+async def get_songs_catalog(
+    q: Optional[str] = Query(default=None, description="Search query across pre-indexed 5,700+ song catalog"),
+    limit: int = Query(default=20, ge=1, le=100, description="Results limit")
+):
+    """
+    🎵 Search or list 5,700+ pre-indexed song catalog (0-1ms latency)
+    """
+    if q and q.strip():
+        results = catalog.search(q.strip(), limit=limit)
+    else:
+        results = catalog.songs[:limit]
+        
+    return {
+        "success": True,
+        "total": len(results),
+        "results": results
+    }
 
 @app.get("/health/live", tags=["Health"])
 async def liveness():
