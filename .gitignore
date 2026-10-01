@@ -13,7 +13,8 @@ venv/
 *.local
 
 # Data
-data/
+!data/songs.json
+!echoapi-main/data/songs.json
 *.log
 server_log.txt
 
