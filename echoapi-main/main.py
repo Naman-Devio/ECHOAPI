@@ -33,7 +33,8 @@ from inntertube import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+import httpx
 import uvicorn
 from tenacity import (
     retry,
@@ -1143,6 +1144,7 @@ async def get_video(
 ):
     """
     Get direct video stream URL at desired resolution.
+    Returns genuine visual video streams with audio (video/mp4).
     """
     video_id = extract_video_id(url)
     if not video_id:
@@ -1152,82 +1154,169 @@ async def get_video(
     cached = await cache_get(cache_key)
 
     if not cached:
-        # Step 0: Check SongCatalog first
-        cat_song = catalog.get_by_id(video_id)
-        if cat_song:
-            cached = {
-                "id": cat_song["id"],
-                "title": cat_song["title"],
-                "thumbnail": cat_song["thumbnail"],
-                "duration": cat_song["duration"],
-                "duration_string": cat_song["duration_string"],
-                "uploader": cat_song.get("channel", "EchoAPI Music"),
-                "video": {
-                    "url": f"/api/musicbot/play/{video_id}",
-                    "resolution": "720p",
-                    "ext": "mp4",
-                },
-                "method": "catalog",
-            }
-            await cache_set(cache_key, cached, ttl=1800)
-            logger.info(f"✓ SongCatalog video hit for {video_id}: {cat_song['title']}")
-        else:
-            # Step 0.5: Check Upstream Meta Backend Provider
-            meta_vid = None
+        # Step 1: Check Upstream Meta Backend Provider for genuine video stream
+        meta_vid = None
+        try:
+            from meta_backend import fetch_meta_backend_video
+            meta_vid = await fetch_meta_backend_video(video_id)
+        except Exception as e:
+            logger.warning(f"Meta backend video query error: {e}")
+
+        if meta_vid and meta_vid.get("stream"):
+            # Fetch metadata via InnerTube for accurate title and duration
+            meta = None
             try:
-                from meta_backend import fetch_meta_backend_video
-                meta_vid = await fetch_meta_backend_video(video_id)
+                raw = await get_video_info_fast(video_id)
+                if raw:
+                    meta = parse_video_info(raw, video_id)
             except Exception:
                 pass
 
-            if meta_vid and meta_vid.get("stream"):
-                cached = {
-                    "id": video_id,
-                    "title": f"Video {video_id}",
-                    "thumbnail": f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg",
-                    "duration": 210,
-                    "duration_string": "3:30",
-                    "uploader": "EchoAPI Video",
-                    "video": {
-                        "url": f"/api/musicbot/play/{video_id}",
-                        "resolution": "720p",
-                        "ext": "mp4",
-                    },
-                    "method": "meta_backend",
-                }
-                await cache_set(cache_key, cached, ttl=1800)
-                logger.info(f"✓ Meta backend video hit for {video_id}")
-            else:
-                try:
-                    info = await extract_info(url)
-                except yt_dlp.utils.DownloadError as e:
-                    raise HTTPException(status_code=400, detail=str(e))
-                except Exception as e:
-                    raise HTTPException(status_code=500, detail=str(e))
+            cached = {
+                "id": video_id,
+                "title": (meta.get("title") if meta else None) or f"Video {video_id}",
+                "thumbnail": (meta.get("thumbnail") if meta else None) or f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg",
+                "duration": meta.get("duration") if meta else 210,
+                "duration_string": meta.get("duration_string") if meta else "3:30",
+                "uploader": (meta.get("uploader") if meta else None) or "EchoAPI Video",
+                "video": {
+                    "url": f"/api/video/stream/{video_id}",
+                    "resolution": "720p",
+                    "ext": "mp4",
+                },
+                "method": "meta_backend",
+            }
+            await cache_set(cache_key, cached, ttl=1800)
+            logger.info(f"✓ Meta backend video hit for {video_id}")
+        else:
+            try:
+                info = await extract_info(url)
+            except yt_dlp.utils.DownloadError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
 
-                video = pick_best_video_url(info, resolution)
-                meta = build_video_info(info)
-                cached = {
-                    "id": meta["id"],
-                    "title": meta["title"],
-                    "thumbnail": meta["thumbnail"],
-                    "duration": meta["duration"],
-                    "duration_string": meta["duration_string"],
-                    "uploader": meta["uploader"],
-                    "video": video,
-                    "method": "yt-dlp",
-                }
-                await cache_set(cache_key, cached, ttl=1800)
+            video = pick_best_video_url(info, resolution)
+            meta = build_video_info(info)
+            cached = {
+                "id": meta["id"],
+                "title": meta["title"],
+                "thumbnail": meta["thumbnail"],
+                "duration": meta["duration"],
+                "duration_string": meta["duration_string"],
+                "uploader": meta["uploader"],
+                "video": {
+                    **video,
+                    "url": f"/api/video/stream/{video_id}"
+                },
+                "method": "yt-dlp",
+            }
+            await cache_set(cache_key, cached, ttl=1800)
 
     if redirect:
-        stream_url = cached.get("video", {}).get("url")
-        if not stream_url:
-            raise HTTPException(status_code=404, detail="No video URL found")
-        if "googlevideo.com" in stream_url:
-            return RedirectResponse(url=f"/api/musicbot/play/{video_id}", status_code=302)
-        return RedirectResponse(url=stream_url, status_code=302)
+        return RedirectResponse(url=f"/api/video/stream/{video_id}", status_code=302)
 
     return {**cached, "cached": True if cached else False}
+
+
+# ── /api/video/stream/{video_id} ──────────────────────────────────────────────
+@app.get("/api/video/stream/{video_id}", tags=["Download"])
+async def stream_video(video_id: str, request: Request):
+    """
+    🎬 Dedicated Video Streaming Pipe
+    Pipes the actual video stream (video/mp4 with visual video + audio track)
+    directly through EchoAPI to the client with full Range header support.
+    """
+    range_header = request.headers.get("range")
+    req_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    if range_header:
+        req_headers["Range"] = range_header
+
+    # ── Step 1: Upstream Meta Backend Video Stream ──
+    try:
+        from meta_backend import fetch_meta_backend_video
+        meta_vid = await fetch_meta_backend_video(video_id)
+        if meta_vid and meta_vid.get("stream"):
+            backend_stream = meta_vid["stream"]
+            client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+            upstream = await client.send(
+                client.build_request("GET", backend_stream, headers=req_headers),
+                stream=True
+            )
+            if upstream.status_code in (200, 206):
+                async def video_stream_generator():
+                    try:
+                        async for chunk in upstream.aiter_bytes(chunk_size=65536):
+                            yield chunk
+                    finally:
+                        await upstream.aclose()
+                        await client.aclose()
+
+                res_headers = {
+                    "Accept-Ranges": "bytes",
+                    "Content-Type": upstream.headers.get("content-type", "video/mp4"),
+                }
+                if "content-length" in upstream.headers:
+                    res_headers["Content-Length"] = upstream.headers["content-length"]
+                if "content-range" in upstream.headers:
+                    res_headers["Content-Range"] = upstream.headers["content-range"]
+
+                return StreamingResponse(
+                    video_stream_generator(),
+                    status_code=upstream.status_code,
+                    headers=res_headers
+                )
+            else:
+                await upstream.aclose()
+                await client.aclose()
+    except Exception as e:
+        logger.warning(f"Meta backend video stream error for {video_id}: {e}")
+
+    # ── Step 2: yt-dlp Video Extraction Fallback ──
+    url = f"https://youtu.be/{video_id}"
+    video_url = None
+    try:
+        info = await extract_info(url)
+        v = pick_best_video_url(info)
+        video_url = v.get("url")
+    except Exception as e:
+        logger.warning(f"yt-dlp video extract failed: {e}")
+
+    if not video_url:
+        raise HTTPException(status_code=404, detail="Video stream not found")
+
+    client = httpx.AsyncClient(timeout=60.0, follow_redirects=True)
+    try:
+        upstream = await client.send(
+            client.build_request("GET", video_url, headers=req_headers),
+            stream=True
+        )
+    except Exception as e:
+        await client.aclose()
+        raise HTTPException(status_code=502, detail=f"Upstream video stream error: {e}")
+
+    async def live_video_generator():
+        try:
+            async for chunk in upstream.aiter_bytes(chunk_size=65536):
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    res_headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Type": upstream.headers.get("content-type", "video/mp4"),
+    }
+    if "content-length" in upstream.headers:
+        res_headers["Content-Length"] = upstream.headers["content-length"]
+    if "content-range" in upstream.headers:
+        res_headers["Content-Range"] = upstream.headers["content-range"]
+
+    return StreamingResponse(
+        live_video_generator(),
+        status_code=upstream.status_code,
+        headers=res_headers
+    )
 
 
 # ── /api/song & /api/songs Catalog Endpoints ─────────────────────────────────
