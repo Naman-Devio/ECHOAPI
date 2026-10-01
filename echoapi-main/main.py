@@ -560,13 +560,12 @@ def _run_ytdlp(url: str, extra_opts: dict = {}) -> dict:
             logger.debug(f"Using proxy: {proxy}")
         
         # Ensure PO token provider configuration is present
-        if pot_available and POT_PROVIDER_URL != "http://127.0.0.1:4416":
+        if pot_available:
             if "extractor_args" not in opts:
                 opts["extractor_args"] = {}
-            if "youtubepot-bgutilhttp" not in opts["extractor_args"]:
-                opts["extractor_args"]["youtubepot-bgutilhttp"] = {
-                    "base_url": [POT_PROVIDER_URL]
-                }
+            opts["extractor_args"]["youtubepot-bgutilhttp"] = {
+                "base_url": [POT_PROVIDER_URL]
+            }
         
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -1053,6 +1052,26 @@ async def get_audio(
                 logger.info(f"yt-dlp audio for {video_id} (audio_only=" + str(audio.get("is_audio_only")) + ")")
         except Exception as e:
             logger.warning(f"yt-dlp audio failed: {e}")
+
+        # Step 2b: Fallback to Catalog Vault
+        if not audio or not audio.get("url"):
+            cat_song = catalog.get_by_id(video_id)
+            if cat_song:
+                audio = {
+                    "url": cat_song.get("stream_url") or f"/api/musicbot/stream/{video_id}",
+                    "ext": "m4a",
+                    "abr": 128,
+                    "is_audio_only": True
+                }
+                if not meta:
+                    meta = {
+                        "id": cat_song["id"],
+                        "title": cat_song["title"],
+                        "thumbnail": cat_song["thumbnail"],
+                        "duration": cat_song["duration"],
+                        "duration_string": cat_song["duration_string"],
+                        "uploader": cat_song.get("channel", "EchoAPI")
+                    }
 
         # Step 3: Return result or error
         if not audio or not audio.get("url") or not meta:
