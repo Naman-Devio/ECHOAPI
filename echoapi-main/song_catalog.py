@@ -47,16 +47,22 @@ class SongCatalog:
                 if not vid_id or not title:
                     continue
                 
+                raw_stream = item.get("stream_url", "")
+                if not raw_stream or "catbox" in raw_stream or "yuki" in raw_stream:
+                    stream_url = f"/api/musicbot/stream/{vid_id}"
+                else:
+                    stream_url = raw_stream
+
                 song_obj = {
                     "id": vid_id,
                     "title": title,
                     "duration": item.get("duration", 210),
                     "duration_string": item.get("duration_string", "3:30"),
                     "thumbnail": item.get("thumbnail") or f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg",
-                    "channel": item.get("artist") or item.get("source", "YouTube Music"),
+                    "channel": item.get("artist") or "EchoAPI Music",
                     "url": f"https://youtu.be/{vid_id}",
-                    "stream_url": item.get("stream_url"),
-                    "source": item.get("source", "catalog_indexed")
+                    "stream_url": stream_url,
+                    "source": "EchoAPI"
                 }
                 self.songs.append(song_obj)
                 self.by_id[vid_id] = song_obj

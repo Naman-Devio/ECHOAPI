@@ -54,6 +54,7 @@ from auth import api_key_manager, verify_api_key, verify_api_key_optional
 from musicbot_api import musicbot_router
 from admin_api import admin_router
 from agent_specs import agent_router
+from meta_api import meta_router
 from keep_alive import start_keep_alive_task
 from song_catalog import catalog
 
@@ -159,6 +160,7 @@ app = FastAPI(
 # Include routers
 app.include_router(musicbot_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
+app.include_router(meta_router, prefix="/api")
 app.include_router(agent_router)
 
 # ── Serverless / Vercel / Cloud Path Normalizer Middleware ──
