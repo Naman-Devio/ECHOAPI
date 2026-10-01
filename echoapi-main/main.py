@@ -1062,16 +1062,41 @@ async def get_audio(
             except Exception as e:
                 logger.warning(f"InnerTube metadata failed: {e}")
 
-            # Step 2: Get streaming URL via yt-dlp with PO token
+            # Step 1.5: Query Upstream Meta Backend Provider (BabiesIQ Engine)
             try:
-                info = await extract_info(url)
-                audio = pick_best_audio_url(info)
-                if audio.get("url"):
+                from meta_backend import fetch_meta_backend_song
+                meta_res = await fetch_meta_backend_song(video_id)
+                if meta_res and meta_res.get("stream"):
+                    audio = {
+                        "url": f"/api/musicbot/play/{video_id}",
+                        "ext": "mp3",
+                        "abr": 128,
+                        "is_audio_only": True
+                    }
                     if not meta:
-                        meta = build_video_info(info)
-                    logger.info(f"yt-dlp audio for {video_id} (audio_only=" + str(audio.get("is_audio_only")) + ")")
-            except Exception as e:
-                logger.warning(f"yt-dlp audio failed: {e}")
+                        meta = {
+                            "id": video_id,
+                            "title": f"Song {video_id}",
+                            "thumbnail": f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg",
+                            "duration": 210,
+                            "duration_string": "3:30",
+                            "uploader": "EchoAPI Music"
+                        }
+                    logger.info(f"✓ Meta backend hit for audio {video_id}")
+            except Exception as mbe:
+                logger.warning(f"Meta backend audio query error: {mbe}")
+
+            # Step 2: Get streaming URL via yt-dlp with PO token (fallback)
+            if not audio or not audio.get("url"):
+                try:
+                    info = await extract_info(url)
+                    audio = pick_best_audio_url(info)
+                    if audio.get("url"):
+                        if not meta:
+                            meta = build_video_info(info)
+                        logger.info(f"yt-dlp audio for {video_id} (audio_only=" + str(audio.get("is_audio_only")) + ")")
+                except Exception as e:
+                    logger.warning(f"yt-dlp audio failed: {e}")
 
         # Return result or error
         if not audio or not audio.get("url") or not meta:
@@ -1092,7 +1117,7 @@ async def get_audio(
             "audio": audio,
             "format_type": "audio_only" if is_audio_only else "video_audio_combined",
             "note": "Audio-only stream" if is_audio_only else "Combined stream",
-            "method": "catalog" if cat_song else "yt-dlp",
+            "method": "catalog" if cat_song else ("meta_backend" if audio.get("ext") == "mp3" else "yt-dlp"),
         }
         await cache_set(cache_key, cached, ttl=1800)
 
@@ -1147,26 +1172,52 @@ async def get_video(
             await cache_set(cache_key, cached, ttl=1800)
             logger.info(f"✓ SongCatalog video hit for {video_id}: {cat_song['title']}")
         else:
+            # Step 0.5: Check Upstream Meta Backend Provider
+            meta_vid = None
             try:
-                info = await extract_info(url)
-            except yt_dlp.utils.DownloadError as e:
-                raise HTTPException(status_code=400, detail=str(e))
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
+                from meta_backend import fetch_meta_backend_video
+                meta_vid = await fetch_meta_backend_video(video_id)
+            except Exception:
+                pass
 
-            video = pick_best_video_url(info, resolution)
-            meta = build_video_info(info)
-            cached = {
-                "id": meta["id"],
-                "title": meta["title"],
-                "thumbnail": meta["thumbnail"],
-                "duration": meta["duration"],
-                "duration_string": meta["duration_string"],
-                "uploader": meta["uploader"],
-                "video": video,
-                "method": "yt-dlp",
-            }
-            await cache_set(cache_key, cached, ttl=1800)
+            if meta_vid and meta_vid.get("stream"):
+                cached = {
+                    "id": video_id,
+                    "title": f"Video {video_id}",
+                    "thumbnail": f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg",
+                    "duration": 210,
+                    "duration_string": "3:30",
+                    "uploader": "EchoAPI Video",
+                    "video": {
+                        "url": f"/api/musicbot/play/{video_id}",
+                        "resolution": "720p",
+                        "ext": "mp4",
+                    },
+                    "method": "meta_backend",
+                }
+                await cache_set(cache_key, cached, ttl=1800)
+                logger.info(f"✓ Meta backend video hit for {video_id}")
+            else:
+                try:
+                    info = await extract_info(url)
+                except yt_dlp.utils.DownloadError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
+                except Exception as e:
+                    raise HTTPException(status_code=500, detail=str(e))
+
+                video = pick_best_video_url(info, resolution)
+                meta = build_video_info(info)
+                cached = {
+                    "id": meta["id"],
+                    "title": meta["title"],
+                    "thumbnail": meta["thumbnail"],
+                    "duration": meta["duration"],
+                    "duration_string": meta["duration_string"],
+                    "uploader": meta["uploader"],
+                    "video": video,
+                    "method": "yt-dlp",
+                }
+                await cache_set(cache_key, cached, ttl=1800)
 
     if redirect:
         stream_url = cached.get("video", {}).get("url")

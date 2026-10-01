@@ -335,6 +335,46 @@ async def play_audio_stream(video_id: str, request: Request):
         except Exception as ce:
             logger.warning(f"Catalog CDN streaming error for {candidate_cdn}: {ce}")
 
+    # ── Step 0.5: Upstream Meta Backend Provider (BabiesIQ Engine) ──
+    try:
+        from meta_backend import fetch_meta_backend_song
+        meta_res = await fetch_meta_backend_song(video_id)
+        if meta_res and meta_res.get("stream"):
+            backend_stream = meta_res["stream"]
+            client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+            upstream = await client.send(
+                client.build_request("GET", backend_stream, headers=req_headers),
+                stream=True
+            )
+            if upstream.status_code in (200, 206):
+                async def backend_stream_generator():
+                    try:
+                        async for chunk in upstream.aiter_bytes(chunk_size=65536):
+                            yield chunk
+                    finally:
+                        await upstream.aclose()
+                        await client.aclose()
+
+                res_headers = {
+                    "Accept-Ranges": "bytes",
+                    "Content-Type": upstream.headers.get("content-type", "audio/mpeg"),
+                }
+                if "content-length" in upstream.headers:
+                    res_headers["Content-Length"] = upstream.headers["content-length"]
+                if "content-range" in upstream.headers:
+                    res_headers["Content-Range"] = upstream.headers["content-range"]
+
+                return StreamingResponse(
+                    backend_stream_generator(),
+                    status_code=upstream.status_code,
+                    headers=res_headers
+                )
+            else:
+                await upstream.aclose()
+                await client.aclose()
+    except Exception as mbe:
+        logger.warning(f"Meta backend streaming error for {video_id}: {mbe}")
+
     # ── Step 1: Live yt-dlp Extraction ──
     url = f"https://youtu.be/{video_id}"
     from po_token_helper import POT_SERVER_URL, check_server as pot_check
