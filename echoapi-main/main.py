@@ -33,7 +33,7 @@ from inntertube import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse, HTMLResponse
 import httpx
 import uvicorn
 from tenacity import (
@@ -1160,13 +1160,20 @@ async def get_audio(
 
     play_path = f"/api/musicbot/play/{video_id}"
     full_audio_url = build_absolute_url(request, play_path)
+    player_url = build_absolute_url(request, f"/player/{video_id}")
 
     if redirect:
         return RedirectResponse(url=full_audio_url, status_code=302)
 
     res = {**cached, "cached": True if cached else False}
     if res.get("audio"):
-        res["audio"] = {**res["audio"], "url": full_audio_url, "stream_path": play_path}
+        res["audio"] = {
+            **res["audio"],
+            "url": full_audio_url,
+            "play_url": full_audio_url,
+            "stream_path": play_path,
+        }
+    res["web_player"] = player_url
     return res
 
 
@@ -1240,14 +1247,76 @@ async def get_video(
 
     video_path = f"/api/video/stream/{video_id}"
     full_video_url = build_absolute_url(request, video_path)
+    player_url = build_absolute_url(request, f"/player/{video_id}")
 
     if redirect:
         return RedirectResponse(url=full_video_url, status_code=302)
 
     res = {**cached, "cached": True if cached else False}
     if res.get("video"):
-        res["video"] = {**res["video"], "url": full_video_url, "stream_path": video_path}
+        res["video"] = {
+            **res["video"],
+            "url": full_video_url,
+            "stream_path": video_path,
+        }
+    res["web_player"] = player_url
     return res
+
+
+# ── /player Interactive Web Player ───────────────────────────────────────────
+@app.get("/player/{video_id}", response_class=HTMLResponse, tags=["Player"])
+@app.get("/player", response_class=HTMLResponse, tags=["Player"])
+async def web_player_view(
+    request: Request,
+    video_id: Optional[str] = None,
+    url: Optional[str] = Query(None, description="YouTube URL"),
+    v: Optional[str] = Query(None, description="YouTube video ID"),
+):
+    """
+    🎵 Interactive Web Player Interface
+    Renders a modern, glassmorphic music player with instant Play button, audio streaming, and direct link options.
+    """
+    target_id = video_id or v or (extract_video_id(url) if url else None) or "_MH5-pfkXAQ"
+
+    meta = None
+    try:
+        from inntertube import get_oembed_info
+        meta = await get_oembed_info(target_id)
+    except Exception:
+        pass
+
+    if not meta:
+        cat_song = catalog.get_by_id(target_id)
+        if cat_song:
+            meta = {
+                "title": cat_song["title"],
+                "channel": cat_song.get("channel", "YouTube Music"),
+                "thumbnail": cat_song.get("thumbnail", f"https://img.youtube.com/vi/{target_id}/hqdefault.jpg"),
+                "duration_string": cat_song.get("duration_string", "3:30"),
+            }
+
+    title = (meta.get("title") if meta else None) or f"Track {target_id}"
+    artist = (meta.get("uploader") or meta.get("channel") if meta else None) or "EchoAPI Music"
+    thumbnail = (meta.get("thumbnail") if meta else None) or f"https://img.youtube.com/vi/{target_id}/hqdefault.jpg"
+    duration_str = (meta.get("duration_string") if meta else None) or "3:30"
+
+    play_path = f"/api/musicbot/play/{target_id}"
+    video_path = f"/api/video/stream/{target_id}"
+    full_stream_url = build_absolute_url(request, play_path)
+    full_video_url = build_absolute_url(request, video_path)
+
+    from player_ui import render_player_html
+    html_content = render_player_html(
+        video_id=target_id,
+        title=title,
+        artist=artist,
+        thumbnail=thumbnail,
+        stream_url=full_stream_url,
+        video_url=full_video_url,
+        duration_str=duration_str,
+        method="meta_backend"
+    )
+    return HTMLResponse(content=html_content)
 
 
 # ── /api/video/stream/{video_id} ──────────────────────────────────────────────
