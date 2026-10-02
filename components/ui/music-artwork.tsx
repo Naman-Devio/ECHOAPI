@@ -154,7 +154,7 @@ export default function MusicArtwork({
           <div className="relative w-50 h-50 sm:w-70 sm:h-70">
            <div
              ref={vinylRef}
-             className="w-full h-full"
+             className="relative w-full h-full flex items-center justify-center"
              style={{
                transform: isPlaying ? undefined : `rotate(${rotation}deg)`,
                animation: isPlaying ? `spin ${spinDuration}s linear infinite` : 'none',
@@ -169,6 +169,18 @@ export default function MusicArtwork({
                className="w-full h-full object-contain"
                unoptimized
              />
+             {/* Actual song image in the center label of the vinyl */}
+             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 sm:w-20 sm:h-20 rounded-full overflow-hidden border-2 border-neutral-900 shadow-inner flex items-center justify-center pointer-events-none">
+               <Image
+                 src={albumArt}
+                 alt={`${music} Center Label`}
+                 width={80}
+                 height={80}
+                 className="w-full h-full object-cover rounded-full"
+                 unoptimized
+               />
+               <div className="absolute w-3 h-3 bg-neutral-950 rounded-full border border-neutral-700/60 shadow-md"></div>
+             </div>
            </div>
          </div>
         </div>

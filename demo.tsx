@@ -10,9 +10,9 @@ export default function Home() {
           <div>
             <div className="flex items-center justify-center">
               <MusicArtwork
-                artist="Drake"
-                music="Search & Rescue"
-                albumArt="https://cdn.21st.dev/assets/mirror/76/767edce9899286a9a394f3a6c4adbff5e90e0b783150cbad131ee141326db922.jpg"
+                artist="Neha Kakkar & Rohanpreet Singh"
+                music="Baarish Mein Tum"
+                albumArt="https://i.ytimg.com/vi/BOT2xL1-p6Q/maxresdefault.jpg"
                 isSong={true}
                 isLoading={false}
               />

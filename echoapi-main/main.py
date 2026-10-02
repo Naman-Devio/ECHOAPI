@@ -1294,13 +1294,16 @@ async def web_player_view(
             meta = {
                 "title": cat_song["title"],
                 "channel": cat_song.get("channel", "YouTube Music"),
-                "thumbnail": cat_song.get("thumbnail", f"https://img.youtube.com/vi/{target_id}/hqdefault.jpg"),
+                "thumbnail": cat_song.get("thumbnail"),
                 "duration_string": cat_song.get("duration_string", "3:30"),
             }
 
     title = (meta.get("title") if meta else None) or f"Track {target_id}"
     artist = (meta.get("uploader") or meta.get("channel") if meta else None) or "EchoAPI Music"
-    thumbnail = (meta.get("thumbnail") if meta else None) or f"https://img.youtube.com/vi/{target_id}/hqdefault.jpg"
+    # Ensure thumbnail is always the real actual song image at highest resolution (1280x720)
+    thumbnail = f"https://i.ytimg.com/vi/{target_id}/maxresdefault.jpg"
+    if meta and meta.get("thumbnail") and "hqdefault" not in meta.get("thumbnail", ""):
+        thumbnail = meta.get("thumbnail")
     duration_str = (meta.get("duration_string") if meta else None) or "3:30"
 
     play_path = f"/api/musicbot/play/{target_id}"

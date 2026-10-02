@@ -192,6 +192,7 @@ def render_player_html(
         }}
 
         .vinyl-disc {{
+            position: relative;
             width: 100%;
             height: 100%;
             border-radius: 50%;
@@ -202,6 +203,39 @@ def render_player_html(
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
             animation: spin 1.33s linear infinite;
             animation-play-state: paused;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+
+        /* Center Label with Actual Song Image */
+        .vinyl-center-label {{
+            position: absolute;
+            width: 78px;
+            height: 78px;
+            border-radius: 50%;
+            overflow: hidden;
+            box-shadow: 0 0 0 3px rgba(10, 10, 15, 0.95), inset 0 0 8px rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #111;
+        }}
+        .vinyl-label-img {{
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 50%;
+            display: block;
+        }}
+        .vinyl-center-hole {{
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #060810;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 0 6px rgba(0, 0, 0, 0.9);
         }}
 
         /* Spin vinyl when music is actively playing */
@@ -599,14 +633,21 @@ def render_player_html(
 
             <!-- Artwork & Sliding Vinyl Record Stage -->
             <div class="artwork-stage" id="artworkStage">
-                <!-- Vinyl Record with Spin Animation -->
+                <!-- Vinyl Record with Spin Animation & Actual Song Center Label -->
                 <div class="vinyl-container">
-                    <div class="vinyl-disc" id="vinylDisc"></div>
+                    <div class="vinyl-disc" id="vinylDisc">
+                        <div class="vinyl-center-label">
+                            <img class="vinyl-label-img" src="{thumbnail}" alt="{escaped_title}"
+                                 onerror="if(!this.dataset.triedSd){{this.dataset.triedSd='1';this.src='https://i.ytimg.com/vi/{video_id}/sddefault.jpg';}}else{{this.src='https://i.ytimg.com/vi/{video_id}/hqdefault.jpg';}}">
+                            <div class="vinyl-center-hole"></div>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Album Art Card -->
+                <!-- Album Art Card with Actual Song Image -->
                 <div class="album-art-card" id="artCard" title="Click to Play / Pause">
-                    <img class="album-img" src="{thumbnail}" alt="{escaped_title}" onerror="this.src='https://img.youtube.com/vi/{video_id}/hqdefault.jpg'">
+                    <img class="album-img" src="{thumbnail}" alt="{escaped_title}"
+                         onerror="if(!this.dataset.triedSd){{this.dataset.triedSd='1';this.src='https://i.ytimg.com/vi/{video_id}/sddefault.jpg';}}else{{this.src='https://i.ytimg.com/vi/{video_id}/hqdefault.jpg';}}">
                     <div class="art-overlay">
                         <div class="center-play-badge" id="overlayPlayBadge">
                             <svg id="overlayPlayIcon" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
