@@ -33,7 +33,7 @@ from inntertube import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse, HTMLResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse, HTMLResponse, Response
 import httpx
 import uvicorn
 from tenacity import (
@@ -826,6 +826,7 @@ async def startup_event():
     asyncio.create_task(start_keep_alive_task())
 
 @app.get("/", tags=["Health"])
+@app.head("/", tags=["Health"])
 async def root():
     return {
         "status": "running",
@@ -838,7 +839,9 @@ async def root():
     }
 
 @app.get("/health", tags=["Health"])
+@app.head("/health", tags=["Health"])
 @app.get("/ping", tags=["Health"])
+@app.head("/ping", tags=["Health"])
 async def health():
     """Basic health & ping check - for anti-sleep and load balancers"""
     return {"status": "ok", "ts": int(time.time())}
@@ -1320,7 +1323,7 @@ async def web_player_view(
 
 
 # ── /api/video/stream/{video_id} ──────────────────────────────────────────────
-@app.get("/api/video/stream/{video_id}", tags=["Download"])
+@app.api_route("/api/video/stream/{video_id}", methods=["GET", "HEAD"], tags=["Download"])
 async def stream_video(video_id: str, request: Request):
     """
     🎬 Dedicated Video Streaming Pipe
@@ -1344,14 +1347,6 @@ async def stream_video(video_id: str, request: Request):
                 stream=True
             )
             if upstream.status_code in (200, 206):
-                async def video_stream_generator():
-                    try:
-                        async for chunk in upstream.aiter_bytes(chunk_size=65536):
-                            yield chunk
-                    finally:
-                        await upstream.aclose()
-                        await client.aclose()
-
                 res_headers = {
                     "Accept-Ranges": "bytes",
                     "Content-Type": upstream.headers.get("content-type", "video/mp4"),
@@ -1360,6 +1355,19 @@ async def stream_video(video_id: str, request: Request):
                     res_headers["Content-Length"] = upstream.headers["content-length"]
                 if "content-range" in upstream.headers:
                     res_headers["Content-Range"] = upstream.headers["content-range"]
+
+                if request.method == "HEAD":
+                    await upstream.aclose()
+                    await client.aclose()
+                    return Response(status_code=upstream.status_code, headers=res_headers)
+
+                async def video_stream_generator():
+                    try:
+                        async for chunk in upstream.aiter_bytes(chunk_size=65536):
+                            yield chunk
+                    finally:
+                        await upstream.aclose()
+                        await client.aclose()
 
                 return StreamingResponse(
                     video_stream_generator(),
@@ -1395,14 +1403,6 @@ async def stream_video(video_id: str, request: Request):
         await client.aclose()
         raise HTTPException(status_code=502, detail=f"Upstream video stream error: {e}")
 
-    async def live_video_generator():
-        try:
-            async for chunk in upstream.aiter_bytes(chunk_size=65536):
-                yield chunk
-        finally:
-            await upstream.aclose()
-            await client.aclose()
-
     res_headers = {
         "Accept-Ranges": "bytes",
         "Content-Type": upstream.headers.get("content-type", "video/mp4"),
@@ -1411,6 +1411,19 @@ async def stream_video(video_id: str, request: Request):
         res_headers["Content-Length"] = upstream.headers["content-length"]
     if "content-range" in upstream.headers:
         res_headers["Content-Range"] = upstream.headers["content-range"]
+
+    if request.method == "HEAD":
+        await upstream.aclose()
+        await client.aclose()
+        return Response(status_code=upstream.status_code, headers=res_headers)
+
+    async def live_video_generator():
+        try:
+            async for chunk in upstream.aiter_bytes(chunk_size=65536):
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
 
     return StreamingResponse(
         live_video_generator(),

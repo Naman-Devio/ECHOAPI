@@ -6,7 +6,7 @@ Specialized endpoints for Discord/Telegram music bots
 import yt_dlp
 import httpx
 from fastapi import APIRouter, Query, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from typing import Optional, List
 from auth import verify_api_key, verify_api_key_optional
 import logging
@@ -344,7 +344,7 @@ async def get_stream_url(
             "expires_in": "~6 hours"
         }
 
-@musicbot_router.get("/play/{video_id}")
+@musicbot_router.api_route("/play/{video_id}", methods=["GET", "HEAD"])
 async def play_audio_stream(video_id: str, request: Request):
     """
     🎵 Universal Audio Streaming Pipe
@@ -370,14 +370,6 @@ async def play_audio_stream(video_id: str, request: Request):
                 stream=True
             )
             if upstream.status_code in (200, 206):
-                async def stream_generator():
-                    try:
-                        async for chunk in upstream.aiter_bytes(chunk_size=65536):
-                            yield chunk
-                    finally:
-                        await upstream.aclose()
-                        await client.aclose()
-
                 res_headers = {
                     "Accept-Ranges": "bytes",
                     "Content-Type": upstream.headers.get("content-type", "audio/mp4"),
@@ -386,6 +378,19 @@ async def play_audio_stream(video_id: str, request: Request):
                     res_headers["Content-Length"] = upstream.headers["content-length"]
                 if "content-range" in upstream.headers:
                     res_headers["Content-Range"] = upstream.headers["content-range"]
+
+                if request.method == "HEAD":
+                    await upstream.aclose()
+                    await client.aclose()
+                    return Response(status_code=upstream.status_code, headers=res_headers)
+
+                async def stream_generator():
+                    try:
+                        async for chunk in upstream.aiter_bytes(chunk_size=65536):
+                            yield chunk
+                    finally:
+                        await upstream.aclose()
+                        await client.aclose()
 
                 return StreamingResponse(
                     stream_generator(),
@@ -411,14 +416,6 @@ async def play_audio_stream(video_id: str, request: Request):
                 stream=True
             )
             if upstream.status_code in (200, 206):
-                async def backend_stream_generator():
-                    try:
-                        async for chunk in upstream.aiter_bytes(chunk_size=65536):
-                            yield chunk
-                    finally:
-                        await upstream.aclose()
-                        await client.aclose()
-
                 res_headers = {
                     "Accept-Ranges": "bytes",
                     "Content-Type": upstream.headers.get("content-type", "audio/mpeg"),
@@ -427,6 +424,19 @@ async def play_audio_stream(video_id: str, request: Request):
                     res_headers["Content-Length"] = upstream.headers["content-length"]
                 if "content-range" in upstream.headers:
                     res_headers["Content-Range"] = upstream.headers["content-range"]
+
+                if request.method == "HEAD":
+                    await upstream.aclose()
+                    await client.aclose()
+                    return Response(status_code=upstream.status_code, headers=res_headers)
+
+                async def backend_stream_generator():
+                    try:
+                        async for chunk in upstream.aiter_bytes(chunk_size=65536):
+                            yield chunk
+                    finally:
+                        await upstream.aclose()
+                        await client.aclose()
 
                 return StreamingResponse(
                     backend_stream_generator(),
@@ -501,14 +511,6 @@ async def play_audio_stream(video_id: str, request: Request):
         await client.aclose()
         raise HTTPException(status_code=502, detail=f"Upstream YouTube stream error: {e}")
 
-    async def live_stream_generator():
-        try:
-            async for chunk in upstream.aiter_bytes(chunk_size=65536):
-                yield chunk
-        finally:
-            await upstream.aclose()
-            await client.aclose()
-
     res_headers = {
         "Accept-Ranges": "bytes",
         "Content-Type": upstream.headers.get("content-type", "audio/mp4"),
@@ -517,6 +519,19 @@ async def play_audio_stream(video_id: str, request: Request):
         res_headers["Content-Length"] = upstream.headers["content-length"]
     if "content-range" in upstream.headers:
         res_headers["Content-Range"] = upstream.headers["content-range"]
+
+    if request.method == "HEAD":
+        await upstream.aclose()
+        await client.aclose()
+        return Response(status_code=upstream.status_code, headers=res_headers)
+
+    async def live_stream_generator():
+        try:
+            async for chunk in upstream.aiter_bytes(chunk_size=65536):
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
 
     return StreamingResponse(
         live_stream_generator(),
