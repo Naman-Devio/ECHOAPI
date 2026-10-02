@@ -36,6 +36,11 @@ services:
         value: "120"
       - key: WORKERS
         value: "1"
+      # Upstream Meta Backend Provider (BabiesIQ Engine)
+      - key: BABIESIQ_API_KEY
+        value: "BABYXF_3B7CB04DD14B37C2A7945985DFC1C35C324CE6DB"
+      - key: BABIESIQ_API_URL
+        value: "https://api.babiesiq.tech"
     healthCheckPath: /health
     autoDeploy: true
 

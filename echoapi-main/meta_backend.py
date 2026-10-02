@@ -12,8 +12,8 @@ from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-BABIESIQ_API_KEY = os.getenv("BABIESIQ_API_KEY", "BABYXF_3B7CB04DD14B37C2A7945985DFC1C35C324CE6DB")
-BABIESIQ_API_URL = os.getenv("BABIESIQ_API_URL", "https://api.babiesiq.tech").rstrip("/")
+BABIESIQ_API_KEY = (os.getenv("BABIESIQ_API_KEY") or "").strip() or "BABYXF_3B7CB04DD14B37C2A7945985DFC1C35C324CE6DB"
+BABIESIQ_API_URL = (os.getenv("BABIESIQ_API_URL") or "https://api.babiesiq.tech").strip().rstrip("/")
 
 async def fetch_meta_backend_song(query_or_vid: str, eq: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
@@ -30,7 +30,7 @@ async def fetch_meta_backend_song(query_or_vid: str, eq: Optional[str] = None) -
     
     headers = {
         "X-API-Key": BABIESIQ_API_KEY,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     }
     
     try:
@@ -38,9 +38,13 @@ async def fetch_meta_backend_song(query_or_vid: str, eq: Optional[str] = None) -
             resp = await client.get(url, params=params, headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
-                if data.get("status") == "ok" and data.get("stream"):
-                    logger.info(f"✓ Meta backend resolved song stream for {query_or_vid}")
+                stream_url = data.get("stream") or data.get("stream_url") or data.get("url")
+                if stream_url and str(stream_url).startswith("http"):
+                    data["stream"] = stream_url
+                    logger.info(f"✓ Meta backend resolved song stream for {query_or_vid} (status={data.get('status')})")
                     return data
+                else:
+                    logger.warning(f"Meta backend returned HTTP 200 without valid stream for {query_or_vid}: {data}")
             else:
                 logger.warning(f"Meta backend returned HTTP {resp.status_code} for {query_or_vid}: {resp.text[:200]}")
     except Exception as e:
@@ -59,7 +63,7 @@ async def fetch_meta_backend_video(query_or_vid: str) -> Optional[Dict[str, Any]
     params = {"query": query_or_vid}
     headers = {
         "X-API-Key": BABIESIQ_API_KEY,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     }
     
     try:
@@ -67,11 +71,15 @@ async def fetch_meta_backend_video(query_or_vid: str) -> Optional[Dict[str, Any]
             resp = await client.get(url, params=params, headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
-                if data.get("status") == "ok" and data.get("stream"):
-                    logger.info(f"✓ Meta backend resolved video stream for {query_or_vid}")
+                stream_url = data.get("stream") or data.get("stream_url") or data.get("url")
+                if stream_url and str(stream_url).startswith("http"):
+                    data["stream"] = stream_url
+                    logger.info(f"✓ Meta backend resolved video stream for {query_or_vid} (status={data.get('status')})")
                     return data
+                else:
+                    logger.warning(f"Meta backend returned HTTP 200 without valid stream for {query_or_vid}: {data}")
             else:
-                logger.warning(f"Meta backend returned HTTP {resp.status_code} for {query_or_vid}")
+                logger.warning(f"Meta backend returned HTTP {resp.status_code} for {query_or_vid}: {resp.text[:200]}")
     except Exception as e:
         logger.warning(f"Meta backend video error for {query_or_vid}: {e}")
     
