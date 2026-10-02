@@ -1011,9 +1011,18 @@ async def get_info(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def build_absolute_url(request: Request, path: str) -> str:
+    """Build full absolute URL from incoming request headers."""
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    if host:
+        return f"{proto}://{host}{path}"
+    return path
+
 # ── /api/audio ────────────────────────────────────────────────────────────────
 @app.get("/api/audio", tags=["Download"])
 async def get_audio(
+    request: Request,
     url: str = Query(..., description="YouTube video URL"),
     quality: str = Query("best", description="best | worst"),
     redirect: bool = Query(False, description="Redirect to stream URL instead of JSON"),
@@ -1149,21 +1158,22 @@ async def get_audio(
         }
         await cache_set(cache_key, cached, ttl=1800)
 
-    if redirect:
-        stream_url = cached.get("audio", {}).get("url")
-        if not stream_url:
-            raise HTTPException(status_code=404, detail="No audio URL found")
-        # Route googlevideo.com URLs through EchoAPI's streaming pipe to avoid client-side IP-lock 403 errors
-        if "googlevideo.com" in stream_url:
-            return RedirectResponse(url=f"/api/musicbot/play/{video_id}", status_code=302)
-        return RedirectResponse(url=stream_url, status_code=302)
+    play_path = f"/api/musicbot/play/{video_id}"
+    full_audio_url = build_absolute_url(request, play_path)
 
-    return {**cached, "cached": True if cached else False}
+    if redirect:
+        return RedirectResponse(url=full_audio_url, status_code=302)
+
+    res = {**cached, "cached": True if cached else False}
+    if res.get("audio"):
+        res["audio"] = {**res["audio"], "url": full_audio_url, "stream_path": play_path}
+    return res
 
 
 # ── /api/video ────────────────────────────────────────────────────────────────
 @app.get("/api/video", tags=["Download"])
 async def get_video(
+    request: Request,
     url: str = Query(..., description="YouTube video URL"),
     resolution: str = Query("best", description="best | worst | 360p | 480p | 720p | 1080p"),
     redirect: bool = Query(False, description="Redirect to stream URL"),
@@ -1228,10 +1238,16 @@ async def get_video(
         await cache_set(cache_key, cached, ttl=1800)
         logger.info(f"✓ Video resolved for {video_id}: {title}")
 
-    if redirect:
-        return RedirectResponse(url=f"/api/video/stream/{video_id}", status_code=302)
+    video_path = f"/api/video/stream/{video_id}"
+    full_video_url = build_absolute_url(request, video_path)
 
-    return {**cached, "cached": True if cached else False}
+    if redirect:
+        return RedirectResponse(url=full_video_url, status_code=302)
+
+    res = {**cached, "cached": True if cached else False}
+    if res.get("video"):
+        res["video"] = {**res["video"], "url": full_video_url, "stream_path": video_path}
+    return res
 
 
 # ── /api/video/stream/{video_id} ──────────────────────────────────────────────
