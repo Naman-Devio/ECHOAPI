@@ -13,11 +13,23 @@ from fastapi.responses import StreamingResponse
 logger = logging.getLogger(__name__)
 
 
+import urllib.parse
+
 async def stream_media_pipe(url: str, request: Request):
     """
     Reverse proxy media stream to client.
     Supports Range header seeking (0-1048576) and HEAD method.
     """
+    # Reconstruct upstream URL if unencoded query params were split by ASGI router
+    if request:
+        raw_query = str(request.url.query)
+        if "url=" in raw_query:
+            raw_target = raw_query.split("url=", 1)[1]
+            if raw_target.startswith("http%3A") or raw_target.startswith("https%3A"):
+                raw_target = urllib.parse.unquote(raw_target)
+            if len(raw_target) > len(url) and raw_target.startswith("http"):
+                url = raw_target
+
     if not url or not str(url).startswith("http"):
         raise HTTPException(status_code=400, detail="Invalid media URL provided")
 

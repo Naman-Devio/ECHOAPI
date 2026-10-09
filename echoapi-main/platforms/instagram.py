@@ -12,6 +12,7 @@ import re
 import json
 import logging
 import asyncio
+import urllib.parse
 from typing import Optional, List, Dict, Any
 import httpx
 import yt_dlp
@@ -19,6 +20,12 @@ import yt_dlp
 from platforms.base import BasePlatformExtractor, PlatformResult, MediaFormat, PlatformAuthor
 
 logger = logging.getLogger(__name__)
+
+def _pipe_url(target: str) -> str:
+    if not target:
+        return ""
+    return f"/api/stream?url={urllib.parse.quote(str(target), safe='')}"
+
 
 INSTAGRAM_REGEX = re.compile(
     r"https?://(?:www\.)?instagram\.com/(?:reel|p|tv|stories)/([a-zA-Z0-9_\-]+)",
@@ -118,7 +125,7 @@ class InstagramExtractor(BasePlatformExtractor):
             formats.append(MediaFormat(
                 format_id="embed_video_1080p",
                 type="video",
-                url=f"/api/stream?url={httpx.URL(raw_video)}",
+                url=_pipe_url(raw_video),
                 direct_url=raw_video,
                 quality="HD Video",
                 ext="mp4",
@@ -137,7 +144,7 @@ class InstagramExtractor(BasePlatformExtractor):
                 formats.append(MediaFormat(
                     format_id="embed_image_original",
                     type="image",
-                    url=f"/api/stream?url={httpx.URL(raw_img)}",
+                    url=_pipe_url(raw_img),
                     direct_url=raw_img,
                     quality="Original Photo",
                     ext="jpg",
@@ -216,7 +223,7 @@ class InstagramExtractor(BasePlatformExtractor):
                     formats.append(MediaFormat(
                         format_id=f"video_{v.get('height', 720)}p",
                         type="video",
-                        url=f"/api/stream?url={httpx.URL(v_url)}",
+                        url=_pipe_url(v_url),
                         direct_url=v_url,
                         quality=f"{v.get('height', 720)}p",
                         ext="mp4",
@@ -231,7 +238,7 @@ class InstagramExtractor(BasePlatformExtractor):
             formats.append(MediaFormat(
                 format_id="photo_high",
                 type="image",
-                url=f"/api/stream?url={httpx.URL(thumbnail)}",
+                url=_pipe_url(thumbnail),
                 direct_url=thumbnail,
                 quality="HD Photo",
                 ext="jpg",
@@ -330,7 +337,7 @@ class InstagramExtractor(BasePlatformExtractor):
             formats.append(MediaFormat(
                 format_id=f.get("format_id"),
                 type="video" if f.get("vcodec") not in (None, "none") else "audio",
-                url=f"/api/stream?url={httpx.URL(f_url)}",
+                url=_pipe_url(f_url),
                 direct_url=f_url,
                 quality=f"{height}p" if height else f.get("format_note"),
                 ext=f.get("ext", "mp4"),
@@ -394,7 +401,7 @@ class InstagramExtractor(BasePlatformExtractor):
             formats.append(MediaFormat(
                 format_id="apify_video_hd",
                 type="video",
-                url=f"/api/stream?url={httpx.URL(video_url)}",
+                url=_pipe_url(video_url),
                 direct_url=video_url,
                 quality="HD Video",
                 ext="mp4",

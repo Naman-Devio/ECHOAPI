@@ -1397,6 +1397,18 @@ async def stream_video(video_id: str, request: Request):
         logger.warning(f"yt-dlp video extract failed: {e}")
 
     if not video_url:
+        try:
+            from inntertube import get_stream_urls_fast
+            fast_streams = await get_stream_urls_fast(video_id)
+            if fast_streams and isinstance(fast_streams, dict):
+                video_obj = fast_streams.get("video") or {}
+                video_url = video_obj.get("url")
+            elif fast_streams and isinstance(fast_streams, list):
+                video_url = fast_streams[0].get("url")
+        except Exception as it_err:
+            logger.warning(f"InnerTube fallback video extract failed: {it_err}")
+
+    if not video_url:
         raise HTTPException(status_code=404, detail="Video stream currently unavailable for this track")
 
     client = httpx.AsyncClient(timeout=60.0, follow_redirects=True)

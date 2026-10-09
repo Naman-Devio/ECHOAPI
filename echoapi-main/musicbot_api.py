@@ -492,10 +492,13 @@ async def play_audio_stream(video_id: str, request: Request):
         try:
             from inntertube import get_stream_urls_fast
             fast_streams = await get_stream_urls_fast(video_id)
-            if fast_streams:
-                stream_url = fast_streams[0].get('url')
-        except Exception:
-            pass
+            if fast_streams and isinstance(fast_streams, dict):
+                audio_obj = fast_streams.get("audio") or {}
+                stream_url = audio_obj.get("url")
+            elif fast_streams and isinstance(fast_streams, list):
+                stream_url = fast_streams[0].get("url")
+        except Exception as it_err:
+            logger.warning(f"InnerTube live audio extract failed: {it_err}")
 
     if not stream_url:
         raise HTTPException(status_code=404, detail="Audio stream not found")
