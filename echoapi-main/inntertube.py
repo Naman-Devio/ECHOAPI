@@ -78,32 +78,32 @@ def extract_video_id(url: str) -> Optional[str]:
 
 
 # ─── Fast Video Info (~300-800ms) ───────────────────────────────────────────
-async def get_video_info_fast(video_id: str, client: str = "android_testsuite", proxy: str = None, po_token: str = None, visitor_data: str = None) -> Optional[Dict]:
+async def get_video_info_fast(video_id: str, client: str = "android_vr", proxy: str = None, po_token: str = None, visitor_data: str = None) -> Optional[Dict]:
     """Fetch video info directly from YouTube InnerTube API (async).
     
     Supports:
-    - ANDROID_TESTSUITE (Bypasses PO tokens & datacenter IP blocks, ~50ms)
+    - ANDROID_VR (Oculus Quest / Android VR client - bypasses PO tokens & returns direct stream URLs)
     - TVHTML5_SIMPLY_EMBEDDED_PLAYER (Smart TV direct cipherless playback)
     - WEB (Standard Web client with PO token)
     """
     client_configs = []
     
     # Priority order of clients
-    if client == "android_testsuite":
+    if client == "android_vr" or client == "android" or client == "android_testsuite":
         client_configs = [
-            {"clientName": "ANDROID_TESTSUITE", "clientVersion": "1.9", "androidSdkVersion": 34, "hl": "en", "gl": "US"},
+            {"clientName": "ANDROID_VR", "clientVersion": "1.61.48", "deviceMake": "Oculus", "deviceModel": "Quest 3", "androidSdkVersion": 32, "hl": "en", "gl": "US"},
             {"clientName": "TVHTML5_SIMPLY_EMBEDDED_PLAYER", "clientVersion": "2.0", "hl": "en", "gl": "US"},
             {"clientName": "WEB", "clientVersion": "2.20250101.00.00", "hl": "en", "gl": "US"},
         ]
     elif client == "tv" or client == "tv_embedded":
         client_configs = [
             {"clientName": "TVHTML5_SIMPLY_EMBEDDED_PLAYER", "clientVersion": "2.0", "hl": "en", "gl": "US"},
-            {"clientName": "ANDROID_TESTSUITE", "clientVersion": "1.9", "androidSdkVersion": 34, "hl": "en", "gl": "US"},
+            {"clientName": "ANDROID_VR", "clientVersion": "1.61.48", "deviceMake": "Oculus", "deviceModel": "Quest 3", "androidSdkVersion": 32, "hl": "en", "gl": "US"},
         ]
     else:
         client_configs = [
+            {"clientName": "ANDROID_VR", "clientVersion": "1.61.48", "deviceMake": "Oculus", "deviceModel": "Quest 3", "androidSdkVersion": 32, "hl": "en", "gl": "US"},
             {"clientName": "WEB", "clientVersion": "2.20250101.00.00", "hl": "en", "gl": "US"},
-            {"clientName": "ANDROID_TESTSUITE", "clientVersion": "1.9", "androidSdkVersion": 34, "hl": "en", "gl": "US"},
         ]
 
     url = f"{INNERTUBE_BASE}/player?key={INNERTUBE_API_KEY}"
@@ -125,7 +125,11 @@ async def get_video_info_fast(video_id: str, client: str = "android_testsuite", 
             }
 
         headers = dict(WEB_HEADERS)
-        if ctx_client.get("clientName") == "ANDROID_TESTSUITE":
+        if ctx_client.get("clientName") == "ANDROID_VR":
+            headers["User-Agent"] = "com.google.android.apps.youtube.vr/1.61.48 (Linux; U; Android 12; en_US; Quest 3)"
+            headers["X-YouTube-Client-Name"] = "55"
+            headers["X-YouTube-Client-Version"] = "1.61.48"
+        elif ctx_client.get("clientName") == "ANDROID_TESTSUITE":
             headers["User-Agent"] = "com.google.android.apps.youtube.unplugged/1.9 (Linux; U; Android 14; en_US; Pixel 8 Pro)"
             headers["X-YouTube-Client-Name"] = "85"
             headers["X-YouTube-Client-Version"] = "1.9"

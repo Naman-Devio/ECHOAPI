@@ -1502,7 +1502,10 @@ async def universal_download(
     if platform:
         result = await extract_platform_media(url)
         if not result or not result.formats:
-            raise HTTPException(status_code=404, detail=f"Failed to extract media from {platform.capitalize()} URL")
+            msg = f"Failed to extract media from {platform.capitalize()} URL. The content may be private, age-gated, audience-restricted, or removed."
+            if platform == "instagram":
+                msg += " (Audience-restricted Instagram reels require an authenticated session or INSTAGRAM_SESSION_ID cookie)."
+            raise HTTPException(status_code=404, detail=msg)
 
         # Rewrite relative stream URLs to absolute URLs
         base_origin = str(request.base_url).rstrip("/")
@@ -1803,6 +1806,12 @@ async def get_playlist(
 # ── Error Handlers ────────────────────────────────────────────────────────────
 @app.exception_handler(404)
 async def not_found(request: Request, exc):
+    detail = getattr(exc, "detail", None)
+    if detail and detail != "Not Found":
+        return JSONResponse(
+            status_code=404,
+            content={"error": detail, "docs": "/docs", "path": str(request.url.path)}
+        )
     return JSONResponse(
         status_code=404,
         content={"error": "Endpoint not found", "docs": "/docs", "path": str(request.url.path)}

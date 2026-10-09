@@ -70,6 +70,15 @@ class InstagramExtractor(BasePlatformExtractor):
         except Exception as e:
             logger.warning(f"Instagram Tier 3 yt-dlp failed for {shortcode}: {e}")
 
+        # ── Tier 4: Apify Managed Cloud Scraper (Residential Proxies) ──
+        try:
+            result = await self._extract_apify(url, shortcode)
+            if result:
+                logger.info(f"✓ Instagram Tier 4 Apify successfully extracted {shortcode}")
+                return result
+        except Exception as e:
+            logger.warning(f"Instagram Tier 4 Apify failed for {shortcode}: {e}")
+
         return None
 
     async def _extract_embed(self, shortcode: str, source_url: str) -> Optional[PlatformResult]:
@@ -272,14 +281,37 @@ class InstagramExtractor(BasePlatformExtractor):
 
         # Check for session cookie from environment variable or cookie file
         session_id = os.getenv("INSTAGRAM_SESSION_ID")
-        if session_id:
+        cookies_text = os.getenv("INSTAGRAM_COOKIES_TEXT")
+
+        candidate_paths = [
+            os.getenv("INSTAGRAM_COOKIES_PATH", ""),
+            "config/cookies/instagram.txt",
+            "instagram_cookies.txt",
+            os.path.join(os.path.dirname(__file__), "..", "config", "cookies", "instagram.txt"),
+            os.path.join(os.path.dirname(__file__), "..", "instagram_cookies.txt"),
+        ]
+
+        if cookies_text:
+            tmp_cookie = "/tmp/instagram_cookies.txt"
+            try:
+                with open(tmp_cookie, "w", encoding="utf-8") as f:
+                    f.write(cookies_text.strip())
+                candidate_paths.insert(0, tmp_cookie)
+            except Exception as e:
+                logger.warning(f"Could not write INSTAGRAM_COOKIES_TEXT: {e}")
+        cookie_file_found = None
+        for cp in candidate_paths:
+            if cp and os.path.exists(cp):
+                cookie_file_found = cp
+                break
+
+        if cookie_file_found:
+            ydl_opts["cookiefile"] = cookie_file_found
+            logger.info(f"✓ Using Instagram cookie file: {cookie_file_found}")
+        elif session_id:
             ydl_opts["http_headers"] = {
                 "Cookie": f"sessionid={session_id};"
             }
-
-        cookie_path = os.getenv("INSTAGRAM_COOKIES_PATH", "config/cookies/instagram.txt")
-        if os.path.exists(cookie_path):
-            ydl_opts["cookiefile"] = cookie_path
 
         def _sync_extract():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -320,4 +352,93 @@ class InstagramExtractor(BasePlatformExtractor):
             media_type="video" if formats else "image",
             formats=formats,
             download_url=formats[0].url if formats else None
+        )
+
+    async def _extract_apify(self, url: str, shortcode: str) -> Optional[PlatformResult]:
+        """
+        Query Apify's managed Instagram Scraper Actor using residential proxies.
+        Bypasses Meta datacenter IP blocks without requiring local browser cookies.
+        """
+        apify_token = os.getenv("APIFY_API_TOKEN")
+        if not apify_token:
+            return None
+
+        api_url = f"https://api.apify.com/v2/actors/apify~instagram-scraper/run-sync-get-dataset-items?token={apify_token}"
+        payload = {
+            "directUrls": [url],
+            "resultsType": "posts",
+            "resultsLimit": 1
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=45.0) as client:
+                resp = await client.post(api_url, json=payload)
+                if resp.status_code not in (200, 201):
+                    logger.warning(f"Apify Instagram scraper returned HTTP {resp.status_code}")
+                    return None
+                items = resp.json()
+                if not items or not isinstance(items, list):
+                    return None
+                item = items[0]
+        except Exception as ae:
+            logger.warning(f"Apify HTTP call failed: {ae}")
+            return None
+
+        formats: List[MediaFormat] = []
+        video_url = item.get("videoUrl")
+        display_url = item.get("displayUrl") or item.get("image")
+        media_type = "video" if video_url else "image"
+        thumbnail = display_url or item.get("thumbnail")
+
+        if video_url:
+            formats.append(MediaFormat(
+                format_id="apify_video_hd",
+                type="video",
+                url=f"/api/stream?url={httpx.URL(video_url)}",
+                direct_url=video_url,
+                quality="HD Video",
+                ext="mp4",
+                has_audio=True
+            ))
+        elif display_url:
+            formats.append(MediaFormat(
+                format_id="apify_image_hd",
+                type="image",
+                url=display_url,
+                direct_url=display_url,
+                quality="original",
+                ext="jpg",
+                has_audio=False
+            ))
+
+        user_info = item.get("user") or {}
+        author = PlatformAuthor(
+            name=user_info.get("full_name") or item.get("title"),
+            username=user_info.get("username"),
+            avatar=user_info.get("profile_pic_url"),
+            url=f"https://instagram.com/{user_info.get('username')}" if user_info.get("username") else None
+        )
+
+        title = item.get("title") or (item.get("caption") or "")[:80] or f"Instagram Post {shortcode}"
+        description = item.get("description") or item.get("caption")
+
+        if not formats:
+            return None
+
+        return PlatformResult(
+            success=True,
+            platform="instagram",
+            id=shortcode,
+            url=url,
+            title=title,
+            description=description,
+            author=author,
+            thumbnail=thumbnail,
+            media_type=media_type,
+            formats=formats,
+            download_url=formats[0].url if formats else None,
+            extra={
+                "likesCount": item.get("likesCount"),
+                "commentsCount": item.get("commentsCount")
+            }
         )

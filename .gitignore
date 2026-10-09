@@ -32,9 +32,12 @@ proxyscrap/proxy_pool/
 .DS_Store
 Thumbs.db
 
-# YouTube cookies
+# Cookies
 cookies.txt
 *.cookies
+*cookies*.txt
+**/config/cookies/
+**/instagram_cookies.txt
 
 # API keys (regenerated)
 api_keys.json

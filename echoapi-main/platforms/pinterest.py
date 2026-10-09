@@ -125,10 +125,17 @@ class PinterestExtractor(BasePlatformExtractor):
                 continue
 
         # 2. Inspect __PWS_DATA__ (contains direct raw video URLs and original uncompressed images)
-        pws_match = re.search(r'<script id="__PWS_DATA__" type="application/json">(.*?)</script>', html, re.DOTALL)
-        if pws_match:
+        pws_text = None
+        pws_idx = html.find('id="__PWS_DATA__"')
+        if pws_idx != -1:
+            tag_end = html.find('>', pws_idx)
+            script_end = html.find('</script>', tag_end)
+            if tag_end != -1 and script_end != -1:
+                pws_text = html[tag_end+1:script_end].strip()
+
+        if pws_text:
             try:
-                pws = json.loads(pws_match.group(1).strip())
+                pws = json.loads(pws_text)
                 # Search recursively for video_list or images
                 videos_dict, images_dict = self._search_pws_media(pws)
                 if videos_dict:
@@ -187,6 +194,36 @@ class PinterestExtractor(BasePlatformExtractor):
                     ext="mp4",
                     has_audio=True
                 ))
+
+        # 4. OpenGraph og:video and og:image fallback
+        if not formats:
+            og_video = re.search(r'property="og:video"\s*content="([^"]+)"', html) or re.search(r'content="([^"]+)"\s*property="og:video"', html)
+            if og_video:
+                v_url = og_video.group(1)
+                media_type = "video"
+                formats.append(MediaFormat(
+                    format_id="og_video",
+                    type="video",
+                    url=f"/api/stream?url={httpx.URL(v_url)}",
+                    direct_url=v_url,
+                    quality="720p",
+                    ext="mp4",
+                    has_audio=True
+                ))
+            else:
+                og_img = re.search(r'property="og:image"\s*content="([^"]+)"', html) or re.search(r'content="([^"]+)"\s*property="og:image"', html)
+                if og_img:
+                    img_url = og_img.group(1)
+                    thumbnail = thumbnail or img_url
+                    formats.append(MediaFormat(
+                        format_id="og_image",
+                        type="image",
+                        url=img_url,
+                        direct_url=img_url,
+                        quality="high",
+                        ext="jpg",
+                        has_audio=False
+                    ))
 
         # Fallback image search if no formats found
         if not formats and thumbnail:
