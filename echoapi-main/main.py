@@ -58,6 +58,7 @@ from agent_specs import agent_router
 from meta_api import meta_router
 from keep_alive import start_keep_alive_task
 from song_catalog import catalog
+from platforms import extract_platform_media, detect_platform, stream_media_pipe
 
 # ─── Logging Setup ────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -830,9 +831,11 @@ async def startup_event():
 async def root():
     return {
         "status": "running",
-        "api": "EchoAPI YouTube Music & Streaming Engine v2.0",
+        "api": "EchoAPI Universal Media & Music Streaming Engine v2.5",
+        "supported_platforms": ["youtube", "tiktok", "instagram", "pinterest", "twitter"],
         "endpoints": [
-            "/api/musicbot/search", "/api/musicbot/stream/{video_id}", "/api/musicbot/info/{video_id}",
+            "/api/download", "/api/instagram", "/api/pinterest", "/api/tiktok", "/api/twitter",
+            "/api/stream", "/api/musicbot/search", "/api/musicbot/stream/{video_id}",
             "/api/search", "/api/audio", "/api/video", "/api/songs", "/llms.txt"
         ],
         "docs": "/docs",
@@ -1474,6 +1477,135 @@ async def list_catalog_songs(
         "hint": f"Next page is /api/songs?page={page+1}&limit={limit}" if page < total_pages else "Reached last page of catalog.",
         "songs": items
     }
+
+
+# ── Universal Multi-Platform Downloader ──────────────────────────────────────
+@app.get("/api/download", tags=["Multi-Platform"])
+async def universal_download(
+    url: str = Query(..., description="URL from Instagram, Pinterest, TikTok, Twitter/X, or YouTube"),
+    redirect: bool = Query(default=False, description="Redirect directly to the highest quality stream/download file"),
+    api_key: Optional[str] = Depends(verify_api_key_optional),
+    request: Request = None,
+):
+    """
+    🌐 Universal Social Media Downloader
+    Auto-detects URL and extracts media streams from:
+    - Instagram (Reels, Posts, Carousels)
+    - Pinterest (Video Pins, Original 4K/HD Photos)
+    - TikTok (HD Videos with No Watermark, Audio MP3)
+    - Twitter / X (1080p/720p/480p MP4, GIFs)
+    - YouTube (Music, Videos)
+    """
+    platform = detect_platform(url)
+
+    # 1. Social Platforms Extraction
+    if platform:
+        result = await extract_platform_media(url)
+        if not result or not result.formats:
+            raise HTTPException(status_code=404, detail=f"Failed to extract media from {platform.capitalize()} URL")
+
+        # Rewrite relative stream URLs to absolute URLs
+        base_origin = str(request.base_url).rstrip("/")
+        for f in result.formats:
+            if f.url.startswith("/"):
+                f.url = f"{base_origin}{f.url}"
+        if result.download_url and result.download_url.startswith("/"):
+            result.download_url = f"{base_origin}{result.download_url}"
+
+        if redirect and result.download_url:
+            return RedirectResponse(url=result.download_url, status_code=302)
+
+        return result
+
+    # 2. Check if it's YouTube
+    yt_id = extract_video_id(url)
+    if yt_id:
+        player_path = f"/player/{yt_id}"
+        full_player_url = build_absolute_url(request, player_path)
+        stream_path = f"/api/video/stream/{yt_id}"
+        full_stream_url = build_absolute_url(request, stream_path)
+
+        if redirect:
+            return RedirectResponse(url=full_stream_url, status_code=302)
+
+        return {
+            "success": True,
+            "platform": "youtube",
+            "id": yt_id,
+            "url": url,
+            "player_url": full_player_url,
+            "download_url": full_stream_url,
+            "formats": [
+                {
+                    "format_id": "youtube_video_stream",
+                    "type": "video",
+                    "url": full_stream_url,
+                    "quality": "720p HD",
+                    "ext": "mp4",
+                    "has_audio": True
+                },
+                {
+                    "format_id": "youtube_audio_stream",
+                    "type": "audio",
+                    "url": build_absolute_url(request, f"/api/musicbot/play/{yt_id}"),
+                    "quality": "128kbps",
+                    "ext": "mp3",
+                    "has_audio": True
+                }
+            ]
+        }
+
+    raise HTTPException(status_code=400, detail="Unsupported platform URL. Supported: Instagram, Pinterest, TikTok, Twitter/X, YouTube")
+
+
+@app.get("/api/pinterest", tags=["Multi-Platform"])
+async def pinterest_download(
+    url: str = Query(..., description="Pinterest Pin or pin.it shortlink"),
+    redirect: bool = Query(default=False, description="Redirect to file"),
+    request: Request = None,
+):
+    """📌 Download Pinterest Videos & Original 4K/HD Images"""
+    return await universal_download(url=url, redirect=redirect, request=request)
+
+
+@app.get("/api/tiktok", tags=["Multi-Platform"])
+async def tiktok_download(
+    url: str = Query(..., description="TikTok video URL or vm.tiktok.com shortlink"),
+    redirect: bool = Query(default=False, description="Redirect to file"),
+    request: Request = None,
+):
+    """🎵 Download Watermark-Free TikTok HD Videos & Audio MP3"""
+    return await universal_download(url=url, redirect=redirect, request=request)
+
+
+@app.get("/api/instagram", tags=["Multi-Platform"])
+async def instagram_download(
+    url: str = Query(..., description="Instagram Reel, Post, or Carousel URL"),
+    redirect: bool = Query(default=False, description="Redirect to file"),
+    request: Request = None,
+):
+    """📷 Download Instagram Reels, Videos, & Photos"""
+    return await universal_download(url=url, redirect=redirect, request=request)
+
+
+@app.get("/api/twitter", tags=["Multi-Platform"])
+async def twitter_download(
+    url: str = Query(..., description="Twitter / X status URL"),
+    redirect: bool = Query(default=False, description="Redirect to file"),
+    request: Request = None,
+):
+    """🐦 Download Twitter / X Videos & Animated GIFs"""
+    return await universal_download(url=url, redirect=redirect, request=request)
+
+
+@app.api_route("/api/stream", methods=["GET", "HEAD"], tags=["Download"])
+async def universal_stream(url: str = Query(..., description="Upstream media URL to stream"), request: Request = None):
+    """
+    🌊 Universal Streaming Reverse-Proxy Pipe
+    Pipes raw media streams from TikTok, Instagram, Pinterest, Twitter, etc.
+    with full HTTP Range header seeking (206 Partial Content) and CORS bypass.
+    """
+    return await stream_media_pipe(url, request)
 
 
 # ── /api/formats ──────────────────────────────────────────────────────────────

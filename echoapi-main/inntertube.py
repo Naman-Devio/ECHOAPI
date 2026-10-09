@@ -78,57 +78,81 @@ def extract_video_id(url: str) -> Optional[str]:
 
 
 # ─── Fast Video Info (~300-800ms) ───────────────────────────────────────────
-async def get_video_info_fast(video_id: str, client: str = "web", proxy: str = None, po_token: str = None, visitor_data: str = None) -> Optional[Dict]:
+async def get_video_info_fast(video_id: str, client: str = "android_testsuite", proxy: str = None, po_token: str = None, visitor_data: str = None) -> Optional[Dict]:
     """Fetch video info directly from YouTube InnerTube API (async).
     
-    Args:
-        video_id: YouTube video ID
-        client: Client type (currently always uses WEB)
-        proxy: Optional HTTP proxy
-        po_token: Optional PO token for streaming data from cloud IPs
-        visitor_data: Optional visitor data (must match the PO token)
+    Supports:
+    - ANDROID_TESTSUITE (Bypasses PO tokens & datacenter IP blocks, ~50ms)
+    - TVHTML5_SIMPLY_EMBEDDED_PLAYER (Smart TV direct cipherless playback)
+    - WEB (Standard Web client with PO token)
     """
-    ctx_client = {
-        "clientName": "WEB",
-        "clientVersion": "2.20250101.00.00",
-        "hl": "en",
-        "gl": "US",
-    }
+    client_configs = []
     
-    # Add visitor_data if provided (required for PO token auth)
-    if visitor_data:
-        ctx_client["visitorData"] = visitor_data
-
-    payload = {
-        "context": {
-            "client": ctx_client,
-        },
-        "videoId": video_id,
-    }
-    
-    # Add PO token for streaming data (bypasses cloud IP blocking)
-    if po_token:
-        payload["serviceIntegrityDimensions"] = {
-            "poToken": po_token,
-        }
-        logger.debug(f"InnerTube request with PO token for {video_id}")
+    # Priority order of clients
+    if client == "android_testsuite":
+        client_configs = [
+            {"clientName": "ANDROID_TESTSUITE", "clientVersion": "1.9", "androidSdkVersion": 34, "hl": "en", "gl": "US"},
+            {"clientName": "TVHTML5_SIMPLY_EMBEDDED_PLAYER", "clientVersion": "2.0", "hl": "en", "gl": "US"},
+            {"clientName": "WEB", "clientVersion": "2.20250101.00.00", "hl": "en", "gl": "US"},
+        ]
+    elif client == "tv" or client == "tv_embedded":
+        client_configs = [
+            {"clientName": "TVHTML5_SIMPLY_EMBEDDED_PLAYER", "clientVersion": "2.0", "hl": "en", "gl": "US"},
+            {"clientName": "ANDROID_TESTSUITE", "clientVersion": "1.9", "androidSdkVersion": 34, "hl": "en", "gl": "US"},
+        ]
+    else:
+        client_configs = [
+            {"clientName": "WEB", "clientVersion": "2.20250101.00.00", "hl": "en", "gl": "US"},
+            {"clientName": "ANDROID_TESTSUITE", "clientVersion": "1.9", "androidSdkVersion": 34, "hl": "en", "gl": "US"},
+        ]
 
     url = f"{INNERTUBE_BASE}/player?key={INNERTUBE_API_KEY}"
-    try:
-        if proxy:
-            # Use a one-off client with proxy
-            async with httpx.AsyncClient(proxy=proxy, timeout=15.0) as c:
-                resp = await c.post(url, json=payload, headers=WEB_HEADERS)
-                resp.raise_for_status()
-                return resp.json()
-        else:
-            c = await _get_client()
-            resp = await c.post(url, json=payload, headers=WEB_HEADERS)
-            resp.raise_for_status()
-            return resp.json()
-    except Exception as e:
-        logger.warning(f"InnerTube player failed for {video_id}: {e}")
-        return None
+    
+    for ctx_client in client_configs:
+        if visitor_data:
+            ctx_client["visitorData"] = visitor_data
+
+        payload = {
+            "context": {
+                "client": ctx_client,
+            },
+            "videoId": video_id,
+        }
+        
+        if po_token and ctx_client.get("clientName") == "WEB":
+            payload["serviceIntegrityDimensions"] = {
+                "poToken": po_token,
+            }
+
+        headers = dict(WEB_HEADERS)
+        if ctx_client.get("clientName") == "ANDROID_TESTSUITE":
+            headers["User-Agent"] = "com.google.android.apps.youtube.unplugged/1.9 (Linux; U; Android 14; en_US; Pixel 8 Pro)"
+            headers["X-YouTube-Client-Name"] = "85"
+            headers["X-YouTube-Client-Version"] = "1.9"
+        elif ctx_client.get("clientName") == "TVHTML5_SIMPLY_EMBEDDED_PLAYER":
+            headers["User-Agent"] = "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/6.0 TV Safari/538.1"
+            headers["X-YouTube-Client-Name"] = "85"
+            headers["X-YouTube-Client-Version"] = "2.0"
+
+        try:
+            if proxy:
+                async with httpx.AsyncClient(proxy=proxy, timeout=12.0) as c:
+                    resp = await c.post(url, json=payload, headers=headers)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        if data.get("streamingData") or data.get("videoDetails"):
+                            return data
+            else:
+                c = await _get_client()
+                resp = await c.post(url, json=payload, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("streamingData") or data.get("videoDetails"):
+                        return data
+        except Exception as e:
+            logger.debug(f"InnerTube {ctx_client.get('clientName')} attempt failed for {video_id}: {e}")
+
+    return None
 
 
 async def get_oembed_info(video_id: str) -> Optional[Dict[str, Any]]:
