@@ -258,6 +258,10 @@ class TikTokExtractor(BasePlatformExtractor):
                 has_audio=bool(f.get("acodec") not in (None, "none"))
             ))
 
+        best_playable = next((fmt for fmt in formats if fmt.type == "video" and fmt.has_audio), None)
+        if not best_playable:
+            best_playable = next((fmt for fmt in formats if fmt.type == "video"), None)
+
         return PlatformResult(
             success=True,
             platform="tiktok",
@@ -270,5 +274,5 @@ class TikTokExtractor(BasePlatformExtractor):
             duration=info.get("duration"),
             media_type="video",
             formats=formats,
-            download_url=formats[0].url if formats else None
+            download_url=best_playable.url if best_playable else (formats[0].url if formats else None)
         )

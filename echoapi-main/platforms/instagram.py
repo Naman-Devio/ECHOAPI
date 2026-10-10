@@ -167,7 +167,10 @@ class InstagramExtractor(BasePlatformExtractor):
         if not formats:
             return None
 
-        download_url = formats[0].url if formats else None
+        best_playable = next((f for f in formats if f.type == "video" and f.has_audio), None)
+        if not best_playable:
+            best_playable = next((f for f in formats if f.type == "video"), None)
+        download_url = best_playable.url if best_playable else (formats[0].url if formats else None)
 
         return PlatformResult(
             success=True,
@@ -253,6 +256,10 @@ class InstagramExtractor(BasePlatformExtractor):
         if item.get("caption") and isinstance(item["caption"], dict):
             caption_text = item["caption"].get("text", "")
 
+        best_playable = next((f for f in formats if f.type == "video" and f.has_audio), None)
+        if not best_playable:
+            best_playable = next((f for f in formats if f.type == "video"), None)
+
         return PlatformResult(
             success=True,
             platform="instagram",
@@ -268,7 +275,7 @@ class InstagramExtractor(BasePlatformExtractor):
             thumbnail=thumbnail,
             media_type=media_type,
             formats=formats,
-            download_url=formats[0].url if formats else None
+            download_url=best_playable.url if best_playable else (formats[0].url if formats else None)
         )
 
     async def _extract_ytdlp(self, url: str, shortcode: str) -> Optional[PlatformResult]:
@@ -328,23 +335,71 @@ class InstagramExtractor(BasePlatformExtractor):
         if not info:
             return None
 
-        formats: List[MediaFormat] = []
+        parsed_formats: List[MediaFormat] = []
         for f in info.get("formats", []):
             f_url = f.get("url")
             if not f_url:
                 continue
+
+            fid = str(f.get("format_id", ""))
+            fnote = str(f.get("format_note", "") or "")
+            vcodec = f.get("vcodec")
+            acodec = f.get("acodec")
+            ext = f.get("ext", "mp4")
             height = f.get("height")
-            formats.append(MediaFormat(
-                format_id=f.get("format_id"),
-                type="video" if f.get("vcodec") not in (None, "none") else "audio",
+            width = f.get("width")
+
+            # 1. Detect pure audio stream
+            if vcodec == "none" or fnote == "DASH audio" or fid.endswith("a") or ext in ("m4a", "mp3"):
+                has_video = False
+                has_audio = True
+                m_type = "audio"
+                quality = "Audio Only"
+            # 2. Detect DASH video-only (no audio)
+            elif acodec == "none" or fnote == "DASH video" or (fid.startswith("dash-") and fid.endswith("v")):
+                has_video = True
+                has_audio = False
+                m_type = "video"
+                quality = f"{height}p (Video Only)" if height else "Video Only"
+            # 3. Progressive or standard video (multiplexed video + audio)
+            else:
+                has_video = True
+                has_audio = True
+                m_type = "video"
+                res_tag = f"{height}p" if height else "HD"
+                quality = f"{res_tag} (Video + Audio)"
+
+            parsed_formats.append(MediaFormat(
+                format_id=fid,
+                type=m_type,
                 url=_pipe_url(f_url),
                 direct_url=f_url,
-                quality=f"{height}p" if height else f.get("format_note"),
-                ext=f.get("ext", "mp4"),
-                width=f.get("width"),
+                quality=quality,
+                ext=ext,
+                width=width,
                 height=height,
-                has_audio=bool(f.get("acodec") not in (None, "none"))
+                has_audio=has_audio
             ))
+
+        # Sort: Progressive (Video + Audio) first, then Video-only, then Audio-only
+        def _fmt_score(fmt: MediaFormat) -> int:
+            score = 0
+            if fmt.type == "video" and fmt.has_audio:
+                score += 100000
+            elif fmt.type == "video":
+                score += 50000
+            elif fmt.type == "audio":
+                score += 10000
+            dim = (fmt.height or 0) + (fmt.width or 0)
+            return score + dim
+
+        parsed_formats.sort(key=_fmt_score, reverse=True)
+
+        best_playable = next((fmt for fmt in parsed_formats if fmt.type == "video" and fmt.has_audio), None)
+        if not best_playable:
+            best_playable = next((fmt for fmt in parsed_formats if fmt.type == "video"), None)
+        if not best_playable and parsed_formats:
+            best_playable = parsed_formats[0]
 
         return PlatformResult(
             success=True,
@@ -356,9 +411,9 @@ class InstagramExtractor(BasePlatformExtractor):
             author=PlatformAuthor(name=info.get("uploader"), username=info.get("uploader_id")),
             thumbnail=info.get("thumbnail"),
             duration=info.get("duration"),
-            media_type="video" if formats else "image",
-            formats=formats,
-            download_url=formats[0].url if formats else None
+            media_type="video" if any(f.type == "video" for f in parsed_formats) else "image",
+            formats=parsed_formats,
+            download_url=best_playable.url if best_playable else None
         )
 
     async def _extract_apify(self, url: str, shortcode: str) -> Optional[PlatformResult]:
@@ -432,6 +487,10 @@ class InstagramExtractor(BasePlatformExtractor):
         if not formats:
             return None
 
+        best_playable = next((f for f in formats if f.type == "video" and f.has_audio), None)
+        if not best_playable:
+            best_playable = next((f for f in formats if f.type == "video"), None)
+
         return PlatformResult(
             success=True,
             platform="instagram",
@@ -443,7 +502,7 @@ class InstagramExtractor(BasePlatformExtractor):
             thumbnail=thumbnail,
             media_type=media_type,
             formats=formats,
-            download_url=formats[0].url if formats else None,
+            download_url=best_playable.url if best_playable else (formats[0].url if formats else None),
             extra={
                 "likesCount": item.get("likesCount"),
                 "commentsCount": item.get("commentsCount")
